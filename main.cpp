@@ -3,15 +3,17 @@
 int main()
 {
 	ff::CudaNn nn;
-	nn.AddFc(1000, 10);
+	nn.AddFc(1000, 500);
+	nn.AddReluFc(500, 100);
+	nn.AddReluFc(100, 10);
 	nn.AddSumOfSquares();
 
-	ff::CudaTensor x(1000, 64);
-	ff::CudaTensor y(10, 64);
+	ff::CudaTensor x(1000, 200);
+	ff::CudaTensor y(10, 200);
 	x.Random();
 	y.Random();
 
-	double learningRate = 0.00001;
+	double learningRate = 0.0001;
 	const ff::CudaTensor* yPred = nullptr;
 	for (int i = 0; i < 10000; ++i)
 	{
