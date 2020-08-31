@@ -469,4 +469,5 @@ namespace ff
 		_beta1t *= kBeta1;
 		_beta2t *= kBeta2;
 	}
+
 } // namespace ff
