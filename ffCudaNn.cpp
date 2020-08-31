@@ -28,7 +28,6 @@ namespace ff
 	{
 		_d0 = d0; _d1 = d1; _d2 = d2; _d3 = d3;
 		_dataSize = _d0 * _d1 * _d2 * _d3;
-		_data.clear();
 		_data.resize(_dataSize);
 
 		if (_dataGpuSize < _dataSize)
@@ -46,23 +45,27 @@ namespace ff
 		{
 			_data[i] = g_distribution(g_generator) * multiplier;
 		}
-		cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
+		cudaError_t err = cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
+		assert(err == cudaSuccess);
 	}
 
 	void CudaTensor::Zero()
 	{
 		memset(&_data[0], 0, _data.size() * sizeof(double));
-		cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
+		cudaError_t err = cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
+		assert(err == cudaSuccess);
 	}
 
 	void CudaTensor::Push()
 	{
-		cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
+		cudaError_t err = cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
+		assert(err == cudaSuccess);
 	}
 
 	void CudaTensor::Pull()
 	{
-		cudaMemcpy(&_data[0], _dataGpu, _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+		cudaError_t err = cudaMemcpy(&_data[0], _dataGpu, _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+		assert(err == cudaSuccess);
 	}
 
 	///////////////////////////////////////////////////////////////////////
@@ -75,39 +78,26 @@ namespace ff
 		{
 			v += x[i + r * xw] * w[c + i * ww];
 		}
-		y[c + r * ww] = v;
+		y[c + r * ww] = v + b[c];
 	}
 
-	void LinearTransform(CudaTensor* y, const CudaTensor* x, const CudaTensor* w, const CudaTensor* b)
+	__global__ void ComputeWg_Cuda(double* wG, const double* x, const double* yG, int nXcol, int nXrow, int nWcol)
 	{
-		//y = xw+b
-		dim3 block(x->_d1), threads(w->_d0);
-		LinearTransform_Cuda <<< block, threads >>> (y->_dataGpu, x->_dataGpu, w->_dataGpu, b->_dataGpu, x->_d0, w->_d0);
-		assert(cudaGetLastError() == cudaSuccess);
-	}
-
-	__global__ void ComputeWg_Cuda(double* wG, const double* x, const double* yG, int xTh, int xTw, int yGw)
-	{
+		// wG = x.T * yG
 		int r = blockIdx.x;
 		int c = threadIdx.x;
 		double v = 0.0;
-		for (int i = 0; i < xTw; ++i)
+		for (int i = 0; i < nXrow; ++i)
 		{
-			v += x[r + i * xTh] * yG[c + i * yGw];
+			v += x[r + i * nXcol] * yG[c + i * nWcol];
 		}
-		wG[c + r * yGw] = v;
+		wG[c + r * nWcol] = v;
 	}
 
-	void ComputeWg(CudaTensor* wG, const CudaTensor* x, const CudaTensor* yG)
+	__global__ void ComputeXg_Cuda(double* xG, const double* yG, const double* w, int yGw, int wTh, int xGw)
 	{
-		// wG = x.T * yG
-		dim3 block(x->_d0), threads(yG->_d0);
-		ComputeWg_Cuda << < block, threads >> > (wG->_dataGpu, x->_dataGpu, yG->_dataGpu, x->_d0, x->_d1, yG->_d0);
-		assert(cudaGetLastError() == cudaSuccess);
-	}
-
-	__global__ void ComputeXg_Cuda(double* xG, const double* yG, const double* w, int yGw, int yGh, int wTh)
-	{
+		// assert(yGw == wTh);
+		// xG = yG * w.T
 		int r = blockIdx.x;
 		int c = threadIdx.x;
 		double v = 0.0;
@@ -115,15 +105,17 @@ namespace ff
 		{
 			v += yG[i + r * yGw] * w[i + c * wTh];
 		}
-		xG[c + r * yGh] = v;
+		xG[c + r * xGw] = v;
 	}
 
-	void ComputeXg(CudaTensor* xG, const CudaTensor* yG, const CudaTensor* w)
+	__global__ void ComputeBg_Cuda(double* bG, const double* yG, int nYgRow)
 	{
-		// xG = yG * w.T
-		dim3 block(yG->_d1), threads(w->_d1);
-		ComputeWg_Cuda << < block, threads >> > (xG->_dataGpu, yG->_dataGpu, w->_dataGpu, yG->_d0, yG->_d1, w->_d0);
-		assert(cudaGetLastError() == cudaSuccess);
+		int c = threadIdx.x;
+		bG[c] = 0.0;
+		for (int i = 0; i < nYgRow; ++i)
+		{
+			bG[c] += yG[c + i * nYgRow];
+		}
 	}
 
 	__global__ void ComputeSumOfSquresGradient(double* yG, const double* y, const double* yLabel, int nCol)
@@ -135,12 +127,38 @@ namespace ff
 		yG[index] = 2.0f * diff;
 	}
 
-	__global__ void UpdateWs_Cuda(int nCol, double learningRate, double* w, const double* wG)
+	__global__ void UpdateWs_Cuda(int nCol, double learningRate, double beta1, double beta2, double beta1t, double beta2t,
+		double* w, const double* wG, double* wG_m, double* wG_v)
 	{
 		int r = blockIdx.x;
 		int c = threadIdx.x;
 		int index = c + r * nCol;
-		w[index] -= wG[index] * learningRate;
+
+		// Vanilla
+		//w[index] -= wG[index] * learningRate;
+
+		// Adam
+		wG_m[index] = beta1 * wG_m[index] + (1.0 - beta1) * wG[index];
+		wG_v[index] = beta2 * wG_v[index] + (1.0 - beta2) * wG[index] * wG[index];
+		double unbiased_m = wG_m[index] / (1.0 - beta1t);
+		double unbiased_v = wG_v[index] / (1.0 - beta2t);
+		w[index] -= (learningRate * unbiased_m / (sqrt(unbiased_v) + 1e-8));
+	}
+
+	__global__ void UpdateBs_Cuda(double learningRate, double beta1, double beta2, double beta1t, double beta2t,
+		double* b, const double* bG, double* bG_m, double* bG_v)
+	{
+		int index = threadIdx.x;
+
+		// Vanilla
+		//b[index] -= bG[index] * learningRate;
+
+		// Adam
+		bG_m[index] = beta1 * bG_m[index] + (1.0 - beta1) * bG[index];
+		bG_v[index] = beta2 * bG_v[index] + (1.0 - beta2) * bG[index] * bG[index];
+		double unbiased_m = bG_m[index] / (1.0 - beta1t);
+		double unbiased_v = bG_v[index] / (1.0 - beta2t);
+		b[index] -= (learningRate * unbiased_m / (sqrt(unbiased_v) + 1e-8));
 	}
 
 	__global__ void Relu_Cuda(double* relu_x, const double* x, int nCol)
@@ -175,85 +193,132 @@ namespace ff
 		_w.ResetTensor(outDim, inDim);
 		_w.Random(1.0 / sqrt(inDim));
 		_wG.ResetTensor(outDim, inDim);
+		_wG_m.ResetTensor(outDim, inDim);
+		_wG_m.Zero();
+		_wG_v.ResetTensor(outDim, inDim);
+		_wG_v.Zero();
 		_b.ResetTensor(outDim);
 		_b.Zero();
 		_bG.ResetTensor(outDim);
+		_bG_m.ResetTensor(outDim);
+		_bG_m.Zero();
+		_bG_v.ResetTensor(outDim);
+		_bG_v.Zero();
 	}
 
 	const CudaTensor* FcLayer::Forward(const CudaTensor* x)
 	{
-		if (x->_d0 != _w._d1)
-			return nullptr;
+		assert(x->_d0 == _w._d1);
 
 		_pX = x;
 		_y.ResetTensor(_w._d0, _pX->_d1);
-		LinearTransform(&_y, _pX, &_w, &_b);
+
+		// y = xw+b
+		dim3 block(x->_d1), threads(_w._d0);
+		LinearTransform_Cuda << < block, threads >> > (_y._dataGpu, _pX->_dataGpu, _w._dataGpu, _b._dataGpu, _pX->_d0, _w._d0);
+		assert(cudaGetLastError() == cudaSuccess);
 		return &_y;
 	}
 
 	const CudaTensor* FcLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		ComputeWg(&_wG, _pX, yG);
-		if (layerIndex > 0)
+		assert(yG->_d0 == _wG._d0);
 		{
-			_xG.ResetTensor(_pX->_d0, _pX->_d1);
-			ComputeXg(&_xG, yG, &_w);
+			dim3 block(_wG._d1), threads(_wG._d0);
+			ComputeWg_Cuda << < block, threads >> > (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, _pX->_d0, _pX->_d1, _wG._d0);
+			assert(cudaGetLastError() == cudaSuccess);
 		}
-		return &_xG;
-	}
 
-	void FcLayer::UpdateWs(double learningRate)
-	{
-		dim3 block(_w._d1), threads(_w._d0);
-		UpdateWs_Cuda <<< block, threads >>> (_w._d0, learningRate, _w._dataGpu, _wG._dataGpu);
-		assert(cudaGetLastError() == cudaSuccess);
-	}
+		{
+			dim3 block(1), threads(_b._d0);
+			ComputeBg_Cuda << < block, threads >> > (_bG._dataGpu, yG->_dataGpu, yG->_d1);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
 
-	ReluFcLayer::ReluFcLayer(int inDim, int outDim) : _pX(nullptr)
-	{
-		_w.ResetTensor(outDim, inDim);
-		_w.Random(1.0 / sqrt(inDim));
-		_wG.ResetTensor(outDim, inDim);
-		_b.ResetTensor(outDim);
-		_b.Zero();
-		_bG.ResetTensor(outDim);
-	}
-
-	const CudaTensor* ReluFcLayer::Forward(const CudaTensor* x)
-	{
-		if (x->_d0 != _w._d1)
-			return nullptr;
-
-		_pX = x;
-		_xRelu.ResetTensor(_pX->_d0, _pX->_d1);
-		dim3 block(_xRelu._d1), threads(_xRelu._d0);
-		Relu_Cuda<<< block, threads >>>(_xRelu._dataGpu, _pX->_dataGpu, _xRelu._d0);
-		assert(cudaGetLastError() == cudaSuccess);
-
-		_y.ResetTensor(_w._d0, _pX->_d1);
-		LinearTransform(&_y, &_xRelu, &_w, &_b);
-		return &_y;
-	}
-
-	const CudaTensor* ReluFcLayer::Backward(const CudaTensor* yG, const int layerIndex)
-	{
-		ComputeWg(&_wG, &_xRelu, yG);
 		if (layerIndex > 0)
 		{
+			assert(yG->_d1 == _pX->_d1);
 			_xG.ResetTensor(_pX->_d0, _pX->_d1);
-			ComputeXg(&_xG, yG, &_w);
 			dim3 block(_xG._d1), threads(_xG._d0);
-			ReluG_Cuda<<< block, threads >>> (_xG._dataGpu, _pX->_dataGpu, _xG._d0);
+			ComputeXg_Cuda << < block, threads >> > (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_xG;
 	}
 
-	void ReluFcLayer::UpdateWs(double learningRate)
+	void FcLayer::UpdateWs(double learningRate, double beta1, double beta2, double beta1t, double beta2t)
 	{
-		dim3 block(_w._d1), threads(_w._d0);
-		UpdateWs_Cuda <<< block, threads >>> (_w._d0, learningRate, _w._dataGpu, _wG._dataGpu);
-		assert(cudaGetLastError() == cudaSuccess);
+		{
+			dim3 block(_w._d1), threads(_w._d0);
+			UpdateWs_Cuda << <block, threads >> > (_w._d0, learningRate, beta1, beta2, beta1t, beta2t, _w._dataGpu, _wG._dataGpu, _wG_m._dataGpu, _wG_v._dataGpu);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+		{
+			dim3 block(1), threads(_b._d0);
+			UpdateBs_Cuda << < block, threads >> > (learningRate, beta1, beta2, beta1t, beta2t, _b._dataGpu, _bG._dataGpu, _bG_m._dataGpu, _bG_v._dataGpu);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+	}
+
+	ReluFcLayer::ReluFcLayer(int inDim, int outDim) : FcLayer(inDim, outDim)
+	{
+	}
+
+	const CudaTensor* ReluFcLayer::Forward(const CudaTensor* x)
+	{
+		assert(x->_d0 == _w._d1);
+
+		_pX = x;
+		_xRelu.ResetTensor(_pX->_d0, _pX->_d1);
+		{
+			dim3 block(_xRelu._d1), threads(_xRelu._d0);
+			Relu_Cuda << < block, threads >> > (_xRelu._dataGpu, _pX->_dataGpu, _xRelu._d0);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+
+		_y.ResetTensor(_w._d0, _xRelu._d1);
+		{
+			// y = xw+b
+			dim3 block(_xRelu._d1), threads(_w._d0);
+			LinearTransform_Cuda << < block, threads >> > (_y._dataGpu, _xRelu._dataGpu, _w._dataGpu, _b._dataGpu, _xRelu._d0, _w._d0);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+
+		return &_y;
+	}
+
+	const CudaTensor* ReluFcLayer::Backward(const CudaTensor* yG, const int layerIndex)
+	{
+		assert(yG->_d0 == _wG._d0);
+		{
+			dim3 block(_wG._d1), threads(_wG._d0);
+			ComputeWg_Cuda << < block, threads >> > (_wG._dataGpu, _xRelu._dataGpu, yG->_dataGpu, _xRelu._d0, _xRelu._d1, _wG._d0);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+
+		{
+			dim3 block(1), threads(_b._d0);
+			ComputeBg_Cuda << < block, threads >> > (_bG._dataGpu, yG->_dataGpu, yG->_d1);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+
+		if (layerIndex > 0)
+		{
+			{
+				assert(yG->_d1 == _pX->_d1);
+				_xG.ResetTensor(_pX->_d0, _pX->_d1);
+				dim3 block(_xG._d1), threads(_xG._d0);
+				ComputeXg_Cuda << < block, threads >> > (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0);
+				assert(cudaGetLastError() == cudaSuccess);
+			}
+			{
+				dim3 block(_xG._d1), threads(_xG._d0);
+				ReluG_Cuda << < block, threads >> > (_xG._dataGpu, _pX->_dataGpu, _xG._d0);
+				assert(cudaGetLastError() == cudaSuccess);
+			}
+		}
+
+		return &_xG;
 	}
 
 	const CudaTensor* SoftmaxLayer::Forward(const CudaTensor* x)
@@ -278,10 +343,12 @@ namespace ff
 			for (int i = 0; i < x->_d0; ++i)
 			{
 				sum += exp(x->_data[i + x->_d0 * r] - maxValue); // stable softmax
+				//sum += exp(x->_data[i + x->_d0 * r]); // stable softmax
 			}
 			for (int i = 0; i < x->_d0; ++i)
 			{
 				_softmax._data[i + _softmax._d0 * r] = exp(x->_data[i + x->_d0 * r] - maxValue) / sum;
+				//_softmax._data[i + _softmax._d0 * r] = exp(x->_data[i + x->_d0 * r]) / sum;
 			}
 		}
 		_softmax.Push();
@@ -290,8 +357,9 @@ namespace ff
 
 	const CudaTensor* SoftmaxLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		dim3 block(yG->_d1), threads(_softmax._d0);
-		SoftmaxBackward_Cuda <<< block, threads >>> (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0);
+		assert(yG->_d0 == _lossG._d1);
+		dim3 block(_lossG._d1), threads(_lossG._d0);
+		SoftmaxBackward_Cuda << < block, threads >> > (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0);
 		assert(cudaGetLastError() == cudaSuccess);
 		return &_lossG;
 	}
@@ -311,12 +379,16 @@ namespace ff
 		_yG.ResetTensor(yLabel->_d0, yLabel->_d1);
 
 		dim3 block(_yG._d1), threads(_yG._d0);
-		ComputeSumOfSquresGradient <<< block, threads >>> (_yG._dataGpu, _pY->_dataGpu, yLabel->_dataGpu, _yG._d0);
+		ComputeSumOfSquresGradient << < block, threads >> > (_yG._dataGpu, _pY->_dataGpu, yLabel->_dataGpu, _yG._d0);
 		assert(cudaGetLastError() == cudaSuccess);
 		return &_yG;
 	}
 
 	///////////////////////////////////////////////////////////////////////
+	CudaNn::CudaNn() : _beta1t(kBeta1), _beta2t(kBeta2)
+	{
+	}
+
 	CudaNn::~CudaNn()
 	{
 		InitializeCudaNn("");
@@ -392,7 +464,9 @@ namespace ff
 		int numLayer = (int)_layers.size();
 		for (int i = 0; i < numLayer; ++i)
 		{
-			_layers[i]->UpdateWs(learningRate);
+			_layers[i]->UpdateWs(learningRate, kBeta1, kBeta2, _beta1t, _beta2t);
 		}
+		_beta1t *= kBeta1;
+		_beta2t *= kBeta2;
 	}
 } // namespace ff

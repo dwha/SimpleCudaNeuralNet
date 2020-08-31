@@ -38,7 +38,7 @@ namespace ff
 
 		virtual const CudaTensor* Backward(const CudaTensor*, const int layerIndex) = 0;
 
-		virtual void UpdateWs(double learningRate) {}
+		virtual void UpdateWs(double learningRate, double beta1, double beta2, double beta1t, double beta2t) {}
 	};
 
 	class FcLayer : public CudaLayer
@@ -50,19 +50,23 @@ namespace ff
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
-		void UpdateWs(double learningRate) override;
+		void UpdateWs(double learningRate, double beta1, double beta2, double beta1t, double beta2t) override;
 
 	public:
 		const CudaTensor* _pX;
 		CudaTensor _xG;
 		CudaTensor _w;
 		CudaTensor _wG;
+		CudaTensor _wG_m;
+		CudaTensor _wG_v;
 		CudaTensor _b;
 		CudaTensor _bG;
+		CudaTensor _bG_m;
+		CudaTensor _bG_v;
 		CudaTensor _y;
 	};
 
-	class ReluFcLayer : public CudaLayer
+	class ReluFcLayer : public FcLayer
 	{
 	public:
 		ReluFcLayer(int inDim, int outDit);
@@ -71,17 +75,8 @@ namespace ff
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
-		void UpdateWs(double learningRate) override;
-
 	public:
-		const CudaTensor* _pX;
 		CudaTensor _xRelu;
-		CudaTensor _xG;
-		CudaTensor _w;
-		CudaTensor _wG;
-		CudaTensor _b;
-		CudaTensor _bG;
-		CudaTensor _y;
 	};
 
 	class SoftmaxLayer : public CudaLayer
@@ -113,6 +108,8 @@ namespace ff
 	class CudaNn
 	{
 	public:
+		CudaNn();
+
 		~CudaNn();
 
 		bool InitializeCudaNn(const char* desc);
@@ -133,8 +130,14 @@ namespace ff
 
 	public:
 		std::vector<CudaLayer*> _layers;
-	};
 
-	void SetLinearTransform(CudaTensor* y, const CudaTensor* x, const CudaTensor* w, const CudaTensor* b);
+		const double kBeta1 = 0.9;
+
+		const double kBeta2 = 0.999;
+
+		double _beta1t;
+
+		double _beta2t;
+	};
 
 } // namespace ff

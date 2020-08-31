@@ -3,9 +3,7 @@
 int main()
 {
 	ff::CudaNn nn;
-	nn.AddFc(1000, 1000);
-	nn.AddReluFc(1000, 500);
-	nn.AddReluFc(500, 10);
+	nn.AddFc(1000, 10);
 	nn.AddSumOfSquares();
 
 	ff::CudaTensor x(1000, 64);
@@ -13,6 +11,7 @@ int main()
 	x.Random();
 	y.Random();
 
+	double learningRate = 0.00001;
 	const ff::CudaTensor* yPred = nullptr;
 	for (int i = 0; i < 10000; ++i)
 	{
@@ -24,7 +23,7 @@ int main()
 		}
 
 		nn.Backward(&y);
-		nn.UpdateWs(0.00001);
+		nn.UpdateWs(learningRate);
 
 		ff::CudaTensor* __yPred = const_cast<ff::CudaTensor*>(yPred);
 		__yPred->Pull();
