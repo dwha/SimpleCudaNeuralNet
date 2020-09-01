@@ -22,4 +22,4 @@ Even naive CUDA implementation easily speeds up by 200x more than single core CP
 
 It was very easy to build handwritten digit recognizer using [MNIST database](http://yann.lecun.com/exdb/mnist/). My first attempt on 2-layer FCNN (1000 hidden unit) could achieve 1.56% Top-1 error rate after 14 epochs which take less than 30 seconds of training time on RTX 2070 graphics card.
 
-![ffCudaNn](https://user-images.githubusercontent.com/670560/91785992-8fee2600-ec41-11ea-9696-031c474edd93.png)
+![ffCudaNn](https://user-images.githubusercontent.com/670560/91796552-735ee780-ec5b-11ea-88fc-0f0a343ce8d6.png)

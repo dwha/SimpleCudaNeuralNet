@@ -178,6 +178,29 @@ namespace ff
 		//if (x[index] < 0.0) xG[index] = 0.0;
 	}
 
+	__global__ void ForwardSoftmax_Step1_Cuda(double* sum, const double* x, int nRow, int nCol)
+	{
+		const int kThreadPerBlock = 64; // Note(dongwook): Should be the same value in SoftmaxLayer::Forward()
+		int r = blockIdx.x * kThreadPerBlock + threadIdx.x;
+		if (nRow <= r) return;
+		sum[0 + r * nCol] = 1e-8;
+		for (int i = 0; i < nCol; ++i)
+		{
+			sum[0 + r * nCol] += exp(x[i + r * nCol]);
+		}
+	}
+
+	__global__ void ForwardSoftmax_Step2_Cuda(double* softmax, const double* sum, const double* x, int nRow, int nCol)
+	{
+		const int kThreadPerBlock = 64; // Note(dongwook): Should be the same value in SoftmaxLayer::Forward()
+		int r = blockIdx.x * kThreadPerBlock + threadIdx.x;
+		if (nRow <= r) return;
+		for (int i = 0; i < nCol; ++i)
+		{
+			softmax[i + r * nCol] = exp(x[i + r * nCol]) / sum[0 + r * nCol];
+		}
+	}
+
 	__global__ void SoftmaxBackward_Cuda(double* lossG, const double* softmax, const double* yLabel, int nCol)
 	{
 		int r = blockIdx.x;
@@ -326,32 +349,13 @@ namespace ff
 		_softmax.ResetTensor(x->_d0, x->_d1);
 		_lossG.ResetTensor(x->_d0, x->_d1);
 
-		const_cast<CudaTensor*>(x)->Pull();
-		for (int r = 0; r < x->_d1; ++r)
-		{
-			double maxValue = x->_data[0 + x->_d0 * r];
-			for (int i = 1; i < x->_d0; ++i)
-			{
-				double currValue = x->_data[i + x->_d0 * r];
-				if (maxValue < currValue)
-				{
-					maxValue = currValue;
-				}
-			}
-
-			double sum = 0.0;
-			for (int i = 0; i < x->_d0; ++i)
-			{
-				sum += exp(x->_data[i + x->_d0 * r] - maxValue); // stable softmax
-				//sum += exp(x->_data[i + x->_d0 * r]); // stable softmax
-			}
-			for (int i = 0; i < x->_d0; ++i)
-			{
-				_softmax._data[i + _softmax._d0 * r] = exp(x->_data[i + x->_d0 * r] - maxValue) / sum;
-				//_softmax._data[i + _softmax._d0 * r] = exp(x->_data[i + x->_d0 * r]) / sum;
-			}
-		}
-		_softmax.Push();
+		const int kThreadPerBlock = 64; // Note(dongwook): Should be the same value in ForwardSoftmax_*_Cuda()
+		int nBlocks = (x->_d1 + kThreadPerBlock - 1) / kThreadPerBlock;
+		dim3 block(nBlocks), threads(kThreadPerBlock);
+		ForwardSoftmax_Step1_Cuda << < block, threads >> > (_lossG._dataGpu, x->_dataGpu, x->_d1, x->_d0);
+		assert(cudaGetLastError() == cudaSuccess);
+		ForwardSoftmax_Step2_Cuda << < block, threads >> > (_softmax._dataGpu, _lossG._dataGpu, x->_dataGpu, x->_d1, x->_d0);
+		assert(cudaGetLastError() == cudaSuccess);
 		return &_softmax;
 	}
 
@@ -442,7 +446,6 @@ namespace ff
 			y = _layers[i]->Forward(x);
 			x = y;
 		}
-
 		return y;
 	}
 
@@ -469,5 +472,4 @@ namespace ff
 		_beta1t *= kBeta1;
 		_beta2t *= kBeta2;
 	}
-
 } // namespace ff
