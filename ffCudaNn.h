@@ -4,6 +4,8 @@
 
 namespace ff
 {
+	class CudaNn;
+
 	class CudaTensor
 	{
 	public:
@@ -16,6 +18,8 @@ namespace ff
 		void Random(const double multiplier = 1.0f);
 
 		void Zero();
+
+		void Dropout(double ratio);
 
 		void Push();
 
@@ -32,6 +36,8 @@ namespace ff
 	class CudaLayer
 	{
 	public:
+		CudaLayer(CudaNn* nn) : _nn(nn) {}
+
 		virtual ~CudaLayer() {}
 
 		virtual const CudaTensor* Forward(const CudaTensor*) = 0;
@@ -39,12 +45,15 @@ namespace ff
 		virtual const CudaTensor* Backward(const CudaTensor*, const int layerIndex) = 0;
 
 		virtual void UpdateWs(double learningRate, double beta1, double beta2, double beta1t, double beta2t) {}
+
+	public:
+		CudaNn* _nn;
 	};
 
 	class FcLayer : public CudaLayer
 	{
 	public:
-		FcLayer(int inDim, int outDit);
+		FcLayer(CudaNn* nn, int inDim, int outDit);
 
 		const CudaTensor* Forward(const CudaTensor*) override;
 
@@ -69,7 +78,7 @@ namespace ff
 	class ReluFcLayer : public FcLayer
 	{
 	public:
-		ReluFcLayer(int inDim, int outDit);
+		ReluFcLayer(CudaNn* nn, int inDim, int outDit);
 
 		const CudaTensor* Forward(const CudaTensor*) override;
 
@@ -79,9 +88,26 @@ namespace ff
 		CudaTensor _xRelu;
 	};
 
+	class DropoutLayer : public CudaLayer
+	{
+	public:
+		DropoutLayer(CudaNn* nn, double dropoutRate) : CudaLayer(nn), _crossCheck(0), _dropoutRate(dropoutRate) {}
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+	public:
+		int	_crossCheck;
+		double _dropoutRate;
+		CudaTensor _dropoutMask;
+	};
+
 	class SoftmaxLayer : public CudaLayer
 	{
 	public:
+		SoftmaxLayer(CudaNn* nn) : CudaLayer(nn) {}
+
 		const CudaTensor* Forward(const CudaTensor*) override;
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
@@ -94,7 +120,7 @@ namespace ff
 	class SumOfSquaresLayer : public CudaLayer
 	{
 	public:
-		SumOfSquaresLayer();
+		SumOfSquaresLayer(CudaNn* nn) : CudaLayer(nn), _pY(nullptr) {}
 
 		const CudaTensor* Forward(const CudaTensor*) override;
 
@@ -118,15 +144,19 @@ namespace ff
 
 		bool AddReluFc(int inDim, int outDim);
 
+		bool AddDropout(double dropoutRatio);
+
 		bool AddSoftmax();
 
 		bool AddSumOfSquares();
 
-		const CudaTensor* Forward(const CudaTensor* x);
+		const CudaTensor* Forward(const CudaTensor* x, bool dropout = false);
 
 		void Backward(const CudaTensor* yLabel);
 
 		void UpdateWs(double learningRate);
+
+		bool IsDropoutEnabled() { return _dropoutEnabled; }
 
 	public:
 		std::vector<CudaLayer*> _layers;
@@ -138,6 +168,8 @@ namespace ff
 		double _beta1t;
 
 		double _beta2t;
+
+		bool _dropoutEnabled;
 	};
 
 } // namespace ff

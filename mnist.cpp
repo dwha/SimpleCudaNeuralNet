@@ -110,7 +110,7 @@ void CheckAccuracy(const ff::CudaTensor* pSoftmax, const ff::CudaTensor& yLabel,
 		for (int i = 0; i < 3; ++i)
 		{
 			for (int j = 0; j < cut[i]; ++j)
-				if (arr[i]._index == yIndex)
+				if (arr[j]._index == yIndex)
 				{
 					++result[i];
 					break;
@@ -137,7 +137,12 @@ int mnist()
 	nn.InitializeCudaNn("");
 
 	nn.AddFc(28 * 28, 1000);
-	nn.AddReluFc(1000, 10);
+	nn.AddDropout(0.5);
+	nn.AddReluFc(1000, 1000);
+	nn.AddDropout(0.5);
+	nn.AddReluFc(1000, 500);
+	nn.AddDropout(0.5);
+	nn.AddReluFc(500, 10);
 	nn.AddSoftmax();
 
 	const int numEpoch = 1000;
@@ -149,7 +154,7 @@ int mnist()
 	{
 		for (size_t j = 0; j < numBatch; ++j)
 		{
-			nn.Forward(&trainingImages[j]);
+			nn.Forward(&trainingImages[j], true);
 			nn.Backward(&trainingLabels[j]);
 			nn.UpdateWs(learningRate);
 		}

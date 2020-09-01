@@ -6,6 +6,7 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 ## Status
 #### Layer
 * Fully connected
+* Dropout for regularisation
 	
 #### Non-linearity
 * Relu

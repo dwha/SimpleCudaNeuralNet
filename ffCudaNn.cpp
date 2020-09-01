@@ -8,7 +8,10 @@ namespace ff
 {
 	///////////////////////////////////////////////////////////////////////
 	static std::default_random_engine g_generator;
-	static std::normal_distribution<double> g_distribution;
+	static std::uniform_real_distribution<double> g_uniformDistribution;
+	static std::normal_distribution<double> g_normalDistribution;
+
+	static const int kThreadPerBlock = 64; // Note(dongwook): Should be the same value in *_Cuda()
 
 	CudaTensor::CudaTensor() : _d0(0), _d1(0), _d2(0), _d3(0), _dataSize(0), _dataGpu(nullptr), _dataGpuSize(0)
 	{
@@ -43,17 +46,28 @@ namespace ff
 	{
 		for (int i = 0; i < _dataSize; ++i)
 		{
-			_data[i] = g_distribution(g_generator) * multiplier;
+			_data[i] = g_normalDistribution(g_generator) * multiplier;
 		}
-		cudaError_t err = cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
-		assert(err == cudaSuccess);
+		Push();
 	}
 
 	void CudaTensor::Zero()
 	{
 		memset(&_data[0], 0, _data.size() * sizeof(double));
-		cudaError_t err = cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
-		assert(err == cudaSuccess);
+		Push();
+	}
+
+	void CudaTensor::Dropout(double ratio)
+	{
+		assert(ratio > 0.0 && ratio < 1.0);
+		double s = 1.0 / (1.0 - ratio);
+		for (int i = 0; i < _dataSize; ++i)
+		{
+			_data[i] = 0.0;
+			if (g_uniformDistribution(g_generator) > ratio)
+				_data[i] = s;
+		}
+		Push();
 	}
 
 	void CudaTensor::Push()
@@ -174,13 +188,12 @@ namespace ff
 		int r = blockIdx.x;
 		int c = threadIdx.x;
 		int index = c + r * nCol;
-		xG[index] = xG[index] * (fmax(x[index], 1e-32) / x[index]);
-		//if (x[index] < 0.0) xG[index] = 0.0;
+		if (x[index] < 0.0) xG[index] = 0.0;
 	}
 
 	__global__ void ForwardSoftmax_Step1_Cuda(double* sum, const double* x, int nRow, int nCol)
 	{
-		const int kThreadPerBlock = 64; // Note(dongwook): Should be the same value in SoftmaxLayer::Forward()
+		const int kThreadPerBlock = 64; // Note(dongwook): If you want to change it, replace all the same name variables
 		int r = blockIdx.x * kThreadPerBlock + threadIdx.x;
 		if (nRow <= r) return;
 		sum[0 + r * nCol] = 1e-8;
@@ -192,7 +205,7 @@ namespace ff
 
 	__global__ void ForwardSoftmax_Step2_Cuda(double* softmax, const double* sum, const double* x, int nRow, int nCol)
 	{
-		const int kThreadPerBlock = 64; // Note(dongwook): Should be the same value in SoftmaxLayer::Forward()
+		const int kThreadPerBlock = 64; // Note(dongwook): If you want to change it, replace all the same name variables
 		int r = blockIdx.x * kThreadPerBlock + threadIdx.x;
 		if (nRow <= r) return;
 		for (int i = 0; i < nCol; ++i)
@@ -210,8 +223,16 @@ namespace ff
 		if ((int)yLabel[r] == c) lossG[index] -= 1.0;
 	}
 
+	__global__ void Dropout_Cuda(double* x, const double* dropoutMask, int nCol)
+	{
+		int r = blockIdx.x;
+		int c = threadIdx.x;
+		int index = c + r * nCol;
+		x[index] *= dropoutMask[index];
+	}
+
 	///////////////////////////////////////////////////////////////////////
-	FcLayer::FcLayer(int inDim, int outDim) : _pX(nullptr)
+	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
 	{
 		_w.ResetTensor(outDim, inDim);
 		_w.Random(1.0 / sqrt(inDim));
@@ -247,14 +268,14 @@ namespace ff
 	{
 		assert(yG->_d0 == _wG._d0);
 		{
+			// wG = x.T * yG
 			dim3 block(_wG._d1), threads(_wG._d0);
-			ComputeWg_Cuda << < block, threads >> > (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, _pX->_d0, _pX->_d1, _wG._d0);
+			ComputeWg_Cuda <<< block, threads >>> (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, _pX->_d0, _pX->_d1, _wG._d0);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
-
 		{
 			dim3 block(1), threads(_b._d0);
-			ComputeBg_Cuda << < block, threads >> > (_bG._dataGpu, yG->_dataGpu, yG->_d1);
+			ComputeBg_Cuda <<< block, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d1);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 
@@ -262,6 +283,7 @@ namespace ff
 		{
 			assert(yG->_d1 == _pX->_d1);
 			_xG.ResetTensor(_pX->_d0, _pX->_d1);
+			// xG = yG * w.T
 			dim3 block(_xG._d1), threads(_xG._d0);
 			ComputeXg_Cuda << < block, threads >> > (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0);
 			assert(cudaGetLastError() == cudaSuccess);
@@ -283,7 +305,7 @@ namespace ff
 		}
 	}
 
-	ReluFcLayer::ReluFcLayer(int inDim, int outDim) : FcLayer(inDim, outDim)
+	ReluFcLayer::ReluFcLayer(CudaNn* nn, int inDim, int outDim) : FcLayer(nn, inDim, outDim)
 	{
 	}
 
@@ -344,18 +366,76 @@ namespace ff
 		return &_xG;
 	}
 
+	const CudaTensor* DropoutLayer::Forward(const CudaTensor* x)
+	{
+		if (false == _nn->IsDropoutEnabled())
+		{
+			return x;
+		}
+
+		_crossCheck = 1;
+		_dropoutMask.ResetTensor(x->_d0, x->_d1);
+		_dropoutMask.Dropout(_dropoutRate);
+
+		dim3 block(x->_d1), threads(x->_d0);
+		Dropout_Cuda<<< block, threads >>>(x->_dataGpu, _dropoutMask._dataGpu, x->_d0);
+		assert(cudaGetLastError() == cudaSuccess);
+		return x;
+	}
+
+	const CudaTensor* DropoutLayer::Backward(const CudaTensor* yG, const int layerIndex)
+	{
+		if (1 != _crossCheck)
+		{
+			return yG;
+		}
+		_crossCheck = 0;
+
+		assert(yG->_d0 == _dropoutMask._d0 && yG->_d1 == _dropoutMask._d1);
+		dim3 block(yG->_d1), threads(yG->_d0);
+		Dropout_Cuda<<< block, threads >>>(yG->_dataGpu, _dropoutMask._dataGpu, yG->_d0);
+		assert(cudaGetLastError() == cudaSuccess);
+		return yG;
+	}
+
 	const CudaTensor* SoftmaxLayer::Forward(const CudaTensor* x)
 	{
 		_softmax.ResetTensor(x->_d0, x->_d1);
 		_lossG.ResetTensor(x->_d0, x->_d1);
 
-		const int kThreadPerBlock = 64; // Note(dongwook): Should be the same value in ForwardSoftmax_*_Cuda()
+#if 1
 		int nBlocks = (x->_d1 + kThreadPerBlock - 1) / kThreadPerBlock;
 		dim3 block(nBlocks), threads(kThreadPerBlock);
 		ForwardSoftmax_Step1_Cuda << < block, threads >> > (_lossG._dataGpu, x->_dataGpu, x->_d1, x->_d0);
 		assert(cudaGetLastError() == cudaSuccess);
 		ForwardSoftmax_Step2_Cuda << < block, threads >> > (_softmax._dataGpu, _lossG._dataGpu, x->_dataGpu, x->_d1, x->_d0);
 		assert(cudaGetLastError() == cudaSuccess);
+#else
+		const_cast<CudaTensor*>(x)->Pull();
+		for (int r = 0; r < x->_d1; ++r)
+		{
+			double maxValue = x->_data[0 + x->_d0 * r];
+			for (int i = 1; i < x->_d0; ++i)
+			{
+				double currValue = x->_data[i + x->_d0 * r];
+				if (maxValue < currValue)
+				{
+					maxValue = currValue;
+				}
+			}
+
+			double sum = 0.0;
+			for (int i = 0; i < x->_d0; ++i)
+			{
+				sum += exp(x->_data[i + x->_d0 * r] - maxValue); // stable softmax
+			}
+			for (int i = 0; i < x->_d0; ++i)
+			{
+				_softmax._data[i + _softmax._d0 * r] = exp(x->_data[i + x->_d0 * r] - maxValue) / sum;
+			}
+		}
+		_softmax.Push();
+#endif
 		return &_softmax;
 	}
 
@@ -366,10 +446,6 @@ namespace ff
 		SoftmaxBackward_Cuda << < block, threads >> > (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0);
 		assert(cudaGetLastError() == cudaSuccess);
 		return &_lossG;
-	}
-
-	SumOfSquaresLayer::SumOfSquaresLayer() : _pY(nullptr)
-	{
 	}
 
 	const CudaTensor* SumOfSquaresLayer::Forward(const CudaTensor* x)
@@ -389,7 +465,7 @@ namespace ff
 	}
 
 	///////////////////////////////////////////////////////////////////////
-	CudaNn::CudaNn() : _beta1t(kBeta1), _beta2t(kBeta2)
+	CudaNn::CudaNn() : _beta1t(kBeta1), _beta2t(kBeta2), _dropoutEnabled(false)
 	{
 	}
 
@@ -412,30 +488,38 @@ namespace ff
 
 	bool CudaNn::AddFc(int inDim, int outDim)
 	{
-		_layers.push_back(new FcLayer(inDim, outDim));
+		_layers.push_back(new FcLayer(this, inDim, outDim));
 		return true;
 	}
 
 	bool CudaNn::AddReluFc(int inDim, int outDim)
 	{
-		_layers.push_back(new ReluFcLayer(inDim, outDim));
+		_layers.push_back(new ReluFcLayer(this, inDim, outDim));
+		return true;
+	}
+
+	bool CudaNn::AddDropout(double dropoutRatio)
+	{
+		assert(dropoutRatio > 0.0 && dropoutRatio < 1.0);
+		_layers.push_back(new DropoutLayer(this, dropoutRatio));
 		return true;
 	}
 
 	bool CudaNn::AddSoftmax()
 	{
-		_layers.push_back(new SoftmaxLayer);
+		_layers.push_back(new SoftmaxLayer(this));
 		return true;
 	}
 
 	bool CudaNn::AddSumOfSquares()
 	{
-		_layers.push_back(new SumOfSquaresLayer);
+		_layers.push_back(new SumOfSquaresLayer(this));
 		return true;
 	}
 
-	const CudaTensor* CudaNn::Forward(const CudaTensor* x)
+	const CudaTensor* CudaNn::Forward(const CudaTensor* x, bool dropout)
 	{
+		_dropoutEnabled = dropout;
 		const CudaTensor* y = nullptr;
 		size_t numLayer = _layers.size();
 		for (size_t i = 0; i < numLayer; ++i)
