@@ -1,4 +1,5 @@
-﻿#include "ffCudaNn.h"
+﻿#include <stdio.h>
+#include "ffCudaNn.h"
 
 int main()
 {
