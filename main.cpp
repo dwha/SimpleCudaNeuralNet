@@ -1,12 +1,13 @@
 ﻿#include <stdio.h>
 #include "ffCudaNn.h"
 
-int main()
+int mnist();
+
+int simple()
 {
 	ff::CudaNn nn;
 	nn.AddFc(1000, 500);
-	nn.AddReluFc(500, 100);
-	nn.AddReluFc(100, 10);
+	nn.AddReluFc(500, 10);
 	nn.AddSumOfSquares();
 
 	ff::CudaTensor x(1000, 200);
@@ -44,4 +45,10 @@ int main()
 		printf("loss: %f\n", loss);
 	}
 	return 0;
+}
+
+int main()
+{
+	//return mnist();
+	return simple();
 }
