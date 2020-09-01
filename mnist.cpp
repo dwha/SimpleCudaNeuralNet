@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <vector>
 #include <algorithm>
+#include <math.h>
 #include "ffCudaNn.h"
 
 #if !defined(__FF_WINDOWS__)
