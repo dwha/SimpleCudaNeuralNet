@@ -9,14 +9,6 @@
 #define _byteswap_ulong(x)	__bswap_32((x))
 #endif
 
-namespace ff
-{
-	inline int min(int a, int b)
-	{
-		return a < b ? a : b;
-	}
-}
-
 void LoadMnistData(const char* imageFile, const char* labelFile, const int batchSize, std::vector<ff::CudaTensor>& images, std::vector<ff::CudaTensor>& labels)
 {
 	// Image
@@ -41,7 +33,7 @@ void LoadMnistData(const char* imageFile, const char* labelFile, const int batch
 	images.resize(numBatches);
 	for (int i = 0; i < numBatches; ++i)
 	{
-		int currBatchSize = ff::min(batchSize, nImages2);
+		int currBatchSize = (batchSize < nImages2 ? batchSize : nImages2);
 		images[i].ResetTensor(nPixels, currBatchSize);
 		for (int j = 0; j < currBatchSize; ++j)
 		{
@@ -70,7 +62,7 @@ void LoadMnistData(const char* imageFile, const char* labelFile, const int batch
 	labels.resize(numBatches);
 	for (int i = 0; i < numBatches; ++i)
 	{
-		int currBatchSize = ff::min(batchSize, nLabels);
+		int currBatchSize = (batchSize < nLabels ? batchSize : nLabels);
 		labels[i].ResetTensor(currBatchSize);
 		for (int j = 0; j < currBatchSize; ++j)
 		{
@@ -135,7 +127,6 @@ int mnist()
 
 	ff::CudaNn nn;
 	nn.InitializeCudaNn("");
-
 	nn.AddFc(28 * 28, 1000);
 	nn.AddDropout(0.5);
 	nn.AddReluFc(1000, 1000);

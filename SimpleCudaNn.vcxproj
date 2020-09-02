@@ -87,6 +87,7 @@
     <ClInclude Include="ffCudaNn.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="cifar10.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mnist.cpp" />
   </ItemGroup>

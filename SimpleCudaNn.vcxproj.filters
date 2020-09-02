@@ -13,6 +13,9 @@
     <ClCompile Include="mnist.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="cifar10.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ffCudaNn.h">

@@ -6,12 +6,22 @@ namespace ff
 {
 	class CudaNn;
 
+#define DISALLOW_COPY_AND_ASSIGN(TypeName)	\
+	TypeName(TypeName&) = delete;			\
+	void operator=(TypeName) = delete;
+
 	class CudaTensor
 	{
 	public:
 		CudaTensor();
+
 		CudaTensor(int d0, int d1 = 1, int d2 = 1, int d3 = 1);
+
+		CudaTensor(const CudaTensor& rhs);
+
 		~CudaTensor();
+
+		CudaTensor& operator=(const CudaTensor& rhs);
 
 		void ResetTensor(int d0, int d1 = 1, int d2 = 1, int d3 = 1);
 
@@ -29,8 +39,8 @@ namespace ff
 		int _d0, _d1, _d2, _d3, _dataSize;
 		std::vector<double> _data;
 
-		double* _dataGpu;
 		int _dataGpuSize;
+		double* _dataGpu;
 	};
 
 	class CudaLayer

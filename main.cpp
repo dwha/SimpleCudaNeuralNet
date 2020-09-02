@@ -2,6 +2,7 @@
 #include "ffCudaNn.h"
 
 int mnist();
+int cifar10();
 
 int simple()
 {
@@ -47,6 +48,7 @@ int simple()
 
 int main()
 {
+	return cifar10();
 	//return mnist();
-	return simple();
+	//return simple();
 }
