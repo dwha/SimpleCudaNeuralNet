@@ -25,11 +25,11 @@ namespace ff
 
 		void ResetTensor(int d0, int d1 = 1, int d2 = 1, int d3 = 1);
 
-		void Random(const double multiplier = 1.0f);
+		void Random(const float multiplier = 1.0f);
 
 		void Zero();
 
-		void Dropout(double ratio);
+		void Dropout(float ratio);
 
 		void Push();
 
@@ -37,10 +37,10 @@ namespace ff
 
 	public:
 		int _d0, _d1, _d2, _d3, _dataSize;
-		std::vector<double> _data;
+		std::vector<float> _data;
 
 		int _dataGpuSize;
-		double* _dataGpu;
+		float* _dataGpu;
 	};
 
 	class CudaLayer
@@ -54,7 +54,7 @@ namespace ff
 
 		virtual const CudaTensor* Backward(const CudaTensor*, const int layerIndex) = 0;
 
-		virtual void UpdateWs(double learningRate, double beta1, double beta2, double beta1t, double beta2t) {}
+		virtual void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) {}
 
 	public:
 		CudaNn* _nn;
@@ -69,7 +69,7 @@ namespace ff
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
-		void UpdateWs(double learningRate, double beta1, double beta2, double beta1t, double beta2t) override;
+		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
 
 	public:
 		const CudaTensor* _pX;
@@ -101,7 +101,7 @@ namespace ff
 	class DropoutLayer : public CudaLayer
 	{
 	public:
-		DropoutLayer(CudaNn* nn, double dropoutRate) : CudaLayer(nn), _crossCheck(0), _dropoutRate(dropoutRate) {}
+		DropoutLayer(CudaNn* nn, float dropoutRate) : CudaLayer(nn), _crossCheck(0), _dropoutRate(dropoutRate) {}
 
 		const CudaTensor* Forward(const CudaTensor*) override;
 
@@ -109,7 +109,7 @@ namespace ff
 
 	public:
 		int	_crossCheck;
-		double _dropoutRate;
+		float _dropoutRate;
 		CudaTensor _dropoutMask;
 	};
 
@@ -154,7 +154,7 @@ namespace ff
 
 		bool AddReluFc(int inDim, int outDim);
 
-		bool AddDropout(double dropoutRatio);
+		bool AddDropout(float dropoutRatio);
 
 		bool AddSoftmax();
 
@@ -164,20 +164,20 @@ namespace ff
 
 		void Backward(const CudaTensor* yLabel);
 
-		void UpdateWs(double learningRate);
+		void UpdateWs(float learningRate);
 
 		bool IsDropoutEnabled() { return _dropoutEnabled; }
 
 	public:
 		std::vector<CudaLayer*> _layers;
 
-		const double kBeta1 = 0.9;
+		const float kBeta1 = 0.9f;
 
-		const double kBeta2 = 0.999;
+		const float kBeta2 = 0.999f;
 
-		double _beta1t;
+		float _beta1t;
 
-		double _beta2t;
+		float _beta2t;
 
 		bool _dropoutEnabled;
 	};

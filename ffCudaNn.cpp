@@ -4,14 +4,14 @@
 #include <random>
 #include <assert.h>
 
-#define K_THREAD_PER_BLOCK	1024
+#define K_THREAD_PER_BLOCK 1024
 
 namespace ff
 {
 	///////////////////////////////////////////////////////////////////////
 	static std::default_random_engine g_generator;
-	static std::uniform_real_distribution<double> g_uniformDistribution;
-	static std::normal_distribution<double> g_normalDistribution;
+	static std::uniform_real_distribution<float> g_uniformDistribution;
+	static std::normal_distribution<float> g_normalDistribution;
 
 
 	CudaTensor::CudaTensor() : _d0(0), _d1(0), _d2(0), _d3(0), _dataSize(0), _dataGpu(nullptr), _dataGpuSize(0)
@@ -51,12 +51,12 @@ namespace ff
 		{
 			_dataGpuSize = _dataSize;
 			if (_dataGpu) cudaFree(_dataGpu);
-			cudaError_t err = cudaMalloc(&_dataGpu, _dataGpuSize * sizeof(double));
+			cudaError_t err = cudaMalloc(&_dataGpu, _dataGpuSize * sizeof(float));
 			assert(err == cudaSuccess);
 		}
 	}
 
-	void CudaTensor::Random(const double multiplier)
+	void CudaTensor::Random(const float multiplier)
 	{
 		for (int i = 0; i < _dataSize; ++i)
 		{
@@ -67,14 +67,14 @@ namespace ff
 
 	void CudaTensor::Zero()
 	{
-		memset(&_data[0], 0, _data.size() * sizeof(double));
+		memset(&_data[0], 0, _data.size() * sizeof(float));
 		Push();
 	}
 
-	void CudaTensor::Dropout(double ratio)
+	void CudaTensor::Dropout(float ratio)
 	{
-		assert(ratio > 0.0 && ratio < 1.0);
-		double s = 1.0 / (1.0 - ratio);
+		assert(ratio > 0.0f && ratio < 1.0f);
+		float s = 1.0f / (1.0f - ratio);
 		for (int i = 0; i < _dataSize; ++i)
 		{
 			_data[i] = 0.0;
@@ -86,25 +86,25 @@ namespace ff
 
 	void CudaTensor::Push()
 	{
-		cudaError_t err = cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyHostToDevice);
+		cudaError_t err = cudaMemcpy(_dataGpu, &_data[0], _dataSize * sizeof(float), cudaMemcpyKind::cudaMemcpyHostToDevice);
 		assert(err == cudaSuccess);
 	}
 
 	void CudaTensor::Pull()
 	{
-		cudaError_t err = cudaMemcpy(&_data[0], _dataGpu, _dataSize * sizeof(double), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+		cudaError_t err = cudaMemcpy(&_data[0], _dataGpu, _dataSize * sizeof(float), cudaMemcpyKind::cudaMemcpyDeviceToHost);
 		assert(err == cudaSuccess);
 	}
 
 	///////////////////////////////////////////////////////////////////////
-	__global__ void LinearTransform_Cuda(double* y, const double* x, const double* w, const double* b, int xw, int ww, int nJobs)
+	__global__ void LinearTransform_Cuda(float* y, const float* x, const float* w, const float* b, int xw, int ww, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
 		int r = jobIndex / ww;
 		int c = jobIndex % ww;
 
-		double v = 0.0;
+		float v = 0.0;
 		for (int i = 0; i < xw; ++i)
 		{
 			v += x[i + r * xw] * w[c + i * ww];
@@ -112,7 +112,7 @@ namespace ff
 		y[c + r * ww] = v + b[c];
 	}
 
-	__global__ void ComputeWg_Cuda(double* wG, const double* x, const double* yG, int nXcol, int nXrow, int nWcol, int nJobs)
+	__global__ void ComputeWg_Cuda(float* wG, const float* x, const float* yG, int nXcol, int nXrow, int nWcol, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -120,7 +120,7 @@ namespace ff
 		int c = jobIndex % nWcol;
 
 		// wG = x.T * yG
-		double v = 0.0;
+		float v = 0.0;
 		for (int i = 0; i < nXrow; ++i)
 		{
 			v += x[r + i * nXcol] * yG[c + i * nWcol];
@@ -128,7 +128,7 @@ namespace ff
 		wG[c + r * nWcol] = v;
 	}
 
-	__global__ void ComputeXg_Cuda(double* xG, const double* yG, const double* w, int yGw, int wTh, int xGw, int nJobs)
+	__global__ void ComputeXg_Cuda(float* xG, const float* yG, const float* w, int yGw, int wTh, int xGw, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -136,7 +136,7 @@ namespace ff
 		int c = jobIndex % xGw;
 
 		// xG = yG * w.T
-		double v = 0.0;
+		float v = 0.0;
 		for (int i = 0; i < yGw; ++i)
 		{
 			v += yG[i + r * yGw] * w[i + c * wTh];
@@ -144,7 +144,7 @@ namespace ff
 		xG[c + r * xGw] = v;
 	}
 
-	__global__ void ComputeBg_Cuda(double* bG, const double* yG, int nYgCol, int nYgRow)
+	__global__ void ComputeBg_Cuda(float* bG, const float* yG, int nYgCol, int nYgRow)
 	{
 		int c = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (c >= nYgCol) return;
@@ -156,17 +156,17 @@ namespace ff
 		}
 	}
 
-	__global__ void ComputeSumOfSquresGradient(double* yG, const double* y, const double* yLabel, int nCol, int nJobs)
+	__global__ void ComputeSumOfSquresGradient(float* yG, const float* y, const float* yLabel, int nCol, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
 
-		double diff = y[index] - yLabel[index];
+		float diff = y[index] - yLabel[index];
 		yG[index] = 2.0f * diff;
 	}
 
-	__global__ void UpdateWs_Cuda(int nCol, double learningRate, double beta1, double beta2, double beta1t, double beta2t,
-		double* w, const double* wG, double* wG_m, double* wG_v, int nJobs)
+	__global__ void UpdateWs_Cuda(int nCol, float learningRate, float beta1, float beta2, float beta1t, float beta2t,
+		float* w, const float* wG, float* wG_m, float* wG_v, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
@@ -177,13 +177,13 @@ namespace ff
 		// Adam
 		wG_m[index] = beta1 * wG_m[index] + (1.0 - beta1) * wG[index];
 		wG_v[index] = beta2 * wG_v[index] + (1.0 - beta2) * wG[index] * wG[index];
-		double unbiased_m = wG_m[index] / (1.0 - beta1t);
-		double unbiased_v = wG_v[index] / (1.0 - beta2t);
+		float unbiased_m = wG_m[index] / (1.0 - beta1t);
+		float unbiased_v = wG_v[index] / (1.0 - beta2t);
 		w[index] -= (learningRate * unbiased_m / (sqrt(unbiased_v) + 1e-8));
 	}
 
-	__global__ void UpdateBs_Cuda(double learningRate, double beta1, double beta2, double beta1t, double beta2t,
-		double* b, const double* bG, double* bG_m, double* bG_v, int nJobs)
+	__global__ void UpdateBs_Cuda(float learningRate, float beta1, float beta2, float beta1t, float beta2t,
+		float* b, const float* bG, float* bG_m, float* bG_v, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
@@ -194,20 +194,20 @@ namespace ff
 		// Adam
 		bG_m[index] = beta1 * bG_m[index] + (1.0 - beta1) * bG[index];
 		bG_v[index] = beta2 * bG_v[index] + (1.0 - beta2) * bG[index] * bG[index];
-		double unbiased_m = bG_m[index] / (1.0 - beta1t);
-		double unbiased_v = bG_v[index] / (1.0 - beta2t);
+		float unbiased_m = bG_m[index] / (1.0 - beta1t);
+		float unbiased_v = bG_v[index] / (1.0 - beta2t);
 		b[index] -= (learningRate * unbiased_m / (sqrt(unbiased_v) + 1e-8));
 	}
 
-	__global__ void Relu_Cuda(double* relu_x, const double* x, int nCol, int nJobs)
+	__global__ void Relu_Cuda(float* relu_x, const float* x, int nCol, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
 
-		relu_x[jobIndex] = fmax(x[jobIndex], 0.0);
+		relu_x[jobIndex] = fmaxf(x[jobIndex], 0.0);
 	}
 
-	__global__ void ReluG_Cuda(double* xG, const double* x, int nCol, int nJobs)
+	__global__ void ReluG_Cuda(float* xG, const float* x, int nCol, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -215,7 +215,7 @@ namespace ff
 		if (x[jobIndex] < 0.0) xG[jobIndex] = 0.0;
 	}
 
-	__global__ void ForwardSoftmax_Step1_Cuda(double* sum, const double* x, int nRow, int nCol)
+	__global__ void ForwardSoftmax_Step1_Cuda(float* sum, const float* x, int nRow, int nCol)
 	{
 		int r = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (nRow <= r) return;
@@ -227,7 +227,7 @@ namespace ff
 		}
 	}
 
-	__global__ void ForwardSoftmax_Step2_Cuda(double* softmax, const double* sum, const double* x, int nRow, int nCol)
+	__global__ void ForwardSoftmax_Step2_Cuda(float* softmax, const float* sum, const float* x, int nRow, int nCol)
 	{
 		int r = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (nRow <= r) return;
@@ -238,7 +238,7 @@ namespace ff
 		}
 	}
 
-	__global__ void SoftmaxBackward_Cuda(double* lossG, const double* softmax, const double* yLabel, int nCol, int nJobs)
+	__global__ void SoftmaxBackward_Cuda(float* lossG, const float* softmax, const float* yLabel, int nCol, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
@@ -249,7 +249,7 @@ namespace ff
 		if (yLabel[r] == c) lossG[index] -= 1.0;
 	}
 
-	__global__ void Dropout_Cuda(double* x, const double* dropoutMask, int nCol, int nJobs)
+	__global__ void Dropout_Cuda(float* x, const float* dropoutMask, int nCol, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
@@ -261,7 +261,8 @@ namespace ff
 	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
 	{
 		_w.ResetTensor(outDim, inDim);
-		_w.Random(1.0 / sqrt(inDim));
+		//_w.Random(1.0 / sqrt(inDim)); // Xavier initialization
+		_w.Random(1.0f / sqrtf(inDim * 0.5f)); // He initialization
 		_wG.ResetTensor(outDim, inDim);
 		_wG_m.ResetTensor(outDim, inDim);
 		_wG_m.Zero();
@@ -324,7 +325,7 @@ namespace ff
 		return &_xG;
 	}
 
-	void FcLayer::UpdateWs(double learningRate, double beta1, double beta2, double beta1t, double beta2t)
+	void FcLayer::UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t)
 	{
 		{
 			int nJobs = _w._d1 * _w._d0;
@@ -355,7 +356,7 @@ namespace ff
 			int nJobs = _xRelu._d1 * _xRelu._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			Relu_Cuda << < block, threads >> > (_xRelu._dataGpu, _pX->_dataGpu, _xRelu._d0, nJobs);
+			Relu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, _xRelu._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 
@@ -365,7 +366,7 @@ namespace ff
 			int nJobs = _xRelu._d1 * _w._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			LinearTransform_Cuda << < block, threads >> > (_y._dataGpu, _xRelu._dataGpu, _w._dataGpu, _b._dataGpu, _xRelu._d0, _w._d0, nJobs);
+			LinearTransform_Cuda <<< block, threads >>> (_y._dataGpu, _xRelu._dataGpu, _w._dataGpu, _b._dataGpu, _xRelu._d0, _w._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 
@@ -465,17 +466,17 @@ namespace ff
 		const_cast<CudaTensor*>(x)->Pull();
 		for (int r = 0; r < x->_d1; ++r)
 		{
-			double maxValue = x->_data[0 + x->_d0 * r];
+			float maxValue = x->_data[0 + x->_d0 * r];
 			for (int i = 1; i < x->_d0; ++i)
 			{
-				double currValue = x->_data[i + x->_d0 * r];
+				float currValue = x->_data[i + x->_d0 * r];
 				if (maxValue < currValue)
 				{
 					maxValue = currValue;
 				}
 			}
 
-			double sum = 0.0;
+			float sum = 0.0;
 			for (int i = 0; i < x->_d0; ++i)
 			{
 				sum += exp(x->_data[i + x->_d0 * r] - maxValue); // stable softmax
@@ -553,7 +554,7 @@ namespace ff
 		return true;
 	}
 
-	bool CudaNn::AddDropout(double dropoutRatio)
+	bool CudaNn::AddDropout(float dropoutRatio)
 	{
 		assert(dropoutRatio > 0.0 && dropoutRatio < 1.0);
 		_layers.push_back(new DropoutLayer(this, dropoutRatio));
@@ -601,7 +602,7 @@ namespace ff
 		}
 	}
 
-	void CudaNn::UpdateWs(double learningRate)
+	void CudaNn::UpdateWs(float learningRate)
 	{
 		int numLayer = (int)_layers.size();
 		for (int i = 0; i < numLayer; ++i)

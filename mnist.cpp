@@ -39,7 +39,7 @@ void LoadMnistData(const char* imageFile, const char* labelFile, const int batch
 		{
 			for (int k = 0; k < nPixels; ++k)
 			{
-				images[i]._data[k + j * nPixels] = imageRaw[(i * batchSize + j) * nPixels + k] / 255.0;
+				images[i]._data[k + j * nPixels] = imageRaw[(i * batchSize + j) * nPixels + k] / 255.0f;
 			}
 		}
 		images[i].Push();
@@ -79,7 +79,7 @@ void CheckAccuracy(const ff::CudaTensor* pSoftmax, const ff::CudaTensor& yLabel,
 	struct Element
 	{
 		int		_index;
-		double	_softmax;
+		float	_softmax;
 	} e;
 
 	int result[3] = { 0, 0, 0 };
@@ -139,8 +139,8 @@ int mnist()
 	const int numEpoch = 1000;
 	const size_t numBatch = trainingImages.size();
 
-	double learningRate = 0.001;
-	double lowest_loss = 1e12;
+	float learningRate = 0.001f;
+	float lowest_loss = 1e8f;
 	for (int i = 0; i < numEpoch; ++i)
 	{
 		for (size_t j = 0; j < numBatch; ++j)
@@ -153,10 +153,10 @@ int mnist()
 		ff::CudaTensor* softmax = const_cast<ff::CudaTensor*>(nn.Forward(&testImages[0]));
 		softmax->Pull();
 
-		double loss = 0.0;
+		float loss = 0.0;
 		for (int j = 0; j < testImages[0]._d1; ++j)
 		{
-			loss += -log(softmax->_data[static_cast<int>(testLabels[0]._data[j]) + softmax->_d0 * j]);
+			loss += -logf(softmax->_data[static_cast<int>(testLabels[0]._data[j]) + softmax->_d0 * j]);
 		}
 		loss /= testImages[0]._d1;
 

@@ -6,7 +6,7 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 ## Status
 #### Layer
 * Fully connected
-* Dropout for regularisation
+* Dropout regularisation
 	
 #### Non-linearity
 * Relu
@@ -19,8 +19,10 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 * Adam
 
 ## Result
-Even naive CUDA implementation easily speeds up by 200x more than single core CPU(Intel i9-9900K) version.
+Even naive CUDA implementation easily speeds up by 700x more than single core CPU(Intel i9-9900K) version.
 
 It was very easy to build handwritten digit recognizer using [MNIST database](http://yann.lecun.com/exdb/mnist/). My first attempt on 2-layer FCNN (1000 hidden unit) could achieve 1.56% Top-1 error rate after 14 epochs which take less than 30 seconds of training time on RTX 2070 graphics card.
+
+Double precision floating point on the CUDA kernels was 3~4x slower than single precision counterpart, in my case.
 
 ![ffCudaNn](https://user-images.githubusercontent.com/670560/91796552-735ee780-ec5b-11ea-88fc-0f0a343ce8d6.png)

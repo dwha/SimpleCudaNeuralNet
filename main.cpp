@@ -17,7 +17,7 @@ int simple()
 	x.Random();
 	y.Random();
 
-	double learningRate = 0.0001;
+	float learningRate = 0.0001f;
 	const ff::CudaTensor* yPred = nullptr;
 	for (int i = 0; i < 500; ++i)
 	{
@@ -31,13 +31,13 @@ int simple()
 		yPred = nn.Forward(&x);
 		const_cast<ff::CudaTensor*>(yPred)->Pull();
 
-		double loss = 0.0;
+		float loss = 0.0;
 		for (int r = 0; r < yPred->_d1; ++r)
 		{
 			for (int c = 0; c < yPred->_d0; ++c)
 			{
 				int index = c + r * yPred->_d0;
-				double diff = yPred->_data[index] - y._data[index];
+				float diff = yPred->_data[index] - y._data[index];
 				loss += (diff * diff);
 			}
 		}
