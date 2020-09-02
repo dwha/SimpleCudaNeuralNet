@@ -179,7 +179,7 @@ namespace ff
 		wG_v[index] = beta2 * wG_v[index] + (1.0 - beta2) * wG[index] * wG[index];
 		float unbiased_m = wG_m[index] / (1.0 - beta1t);
 		float unbiased_v = wG_v[index] / (1.0 - beta2t);
-		w[index] -= (learningRate * unbiased_m / (sqrt(unbiased_v) + 1e-8));
+		w[index] -= (learningRate * unbiased_m / (sqrtf(unbiased_v) + 1e-8f));
 	}
 
 	__global__ void UpdateBs_Cuda(float learningRate, float beta1, float beta2, float beta1t, float beta2t,
@@ -196,7 +196,7 @@ namespace ff
 		bG_v[index] = beta2 * bG_v[index] + (1.0 - beta2) * bG[index] * bG[index];
 		float unbiased_m = bG_m[index] / (1.0 - beta1t);
 		float unbiased_v = bG_v[index] / (1.0 - beta2t);
-		b[index] -= (learningRate * unbiased_m / (sqrt(unbiased_v) + 1e-8));
+		b[index] -= (learningRate * unbiased_m / (sqrtf(unbiased_v) + 1e-8f));
 	}
 
 	__global__ void Relu_Cuda(float* relu_x, const float* x, int nCol, int nJobs)
@@ -261,7 +261,7 @@ namespace ff
 	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
 	{
 		_w.ResetTensor(outDim, inDim);
-		//_w.Random(1.0 / sqrt(inDim)); // Xavier initialization
+		//_w.Random(1.0 / sqrtf(inDim)); // Xavier initialization
 		_w.Random(1.0f / sqrtf(inDim * 0.5f)); // He initialization
 		_wG.ResetTensor(outDim, inDim);
 		_wG_m.ResetTensor(outDim, inDim);
@@ -483,7 +483,7 @@ namespace ff
 			}
 			for (int i = 0; i < x->_d0; ++i)
 			{
-				_softmax._data[i + _softmax._d0 * r] = exp(x->_data[i + x->_d0 * r] - maxValue) / sum;
+				_softmax._data[i + _softmax._d0 * r] = expf(x->_data[i + x->_d0 * r] - maxValue) / sum;
 			}
 		}
 		_softmax.Push();

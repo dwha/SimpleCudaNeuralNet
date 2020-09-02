@@ -53,8 +53,10 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 		"cifar-10/data_batch_3.bin", 
 		"cifar-10/data_batch_4.bin",
 		"cifar-10/data_batch_5.bin" };
-	float mean[3] = { 125.3f, 123.0f, 113.9f };
+
+	// Data normalization
 	float std[3] = { 63.0f, 62.1f, 66.7f };
+	float mean[3] = { 125.3f, 123.0f, 113.9f };
 
 	std::vector<unsigned char> raw(30730000);
 	for (int i = 0; i < 5; ++i)
@@ -75,8 +77,7 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 				for (int k = 0; k < kNumBytesPerChannel; ++k)
 				{
 					float val = *pCurr++;
-					trainingImages[batchIndex]._data[elementIndex * kNumBytesPerChannel + c * kNumBytesPerChannel + k] = (val - mean[c]) / std[c];
-					//trainingImages[batchIndex]._data[elementIndex * kNumBytesPerChannel + c * kNumBytesPerChannel + k] = val / 255.0f;
+					trainingImages[batchIndex]._data[elementIndex * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + k] = (val - mean[c]) / std[c];
 				}
 			}
 		}
@@ -100,8 +101,7 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 			for (int j = 0; j < kNumBytesPerChannel; ++j)
 			{
 				float val = *pCurr++;
-				testImages._data[i * kNumBytesPerChannel + c * kNumBytesPerChannel + j] = (val - mean[c]) / std[c];
-				//testImages._data[i * kNumBytesPerChannel + c * kNumBytesPerChannel + j] = val / 255.0f;
+				testImages._data[i * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + j] = (val - mean[c]) / std[c];
 			}
 		}
 	}
@@ -122,7 +122,8 @@ int cifar10()
 	ff::CudaNn nn;
 	nn.InitializeCudaNn("");
 	nn.AddFc(1024 * 3, 4096);
-	nn.AddReluFc(4096, 10);
+	nn.AddReluFc(4096, 2048);
+	nn.AddReluFc(2048, 10);
 	nn.AddSoftmax();
 
 	float loss = 0.0f;
@@ -136,16 +137,17 @@ int cifar10()
 	int top1 = 0, top3 = 0, top5 = 0;
 	ff::CudaTensor* pSoftmax = nullptr;
 
+	char buffer[2048];
 	const int numEpoch = 10000;
-	float learningRate = 0.0005f;
+	float learningRate = 0.001f;
 	printf("* Initial learning rate(%f)\n", learningRate);
 	for (int i = 0; i < numEpoch; ++i)
 	{
-		printf("-- Epoch[%03d] ...\n", i + 1);
+		sprintf(buffer, "-- Epoch %03d", i + 1);
+		MeasureTime __m(buffer);
 
 		// Training
 		{
-			MeasureTime m("Training");
 			for (size_t j = 0; j < numBatch; ++j)
 			{
 				if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
@@ -161,7 +163,6 @@ int cifar10()
 
 		// Validation loss
 		{
-			MeasureTime m("Validation");
 			loss = 0.0f;
 			top1 = top3 = top5 = 0;
 			int cntVal = 0;
@@ -187,9 +188,10 @@ int cifar10()
 			if (loss > last_validation_loss)
 			{
 				// Learning rate decay
-				learningRate *= 0.33333f;
+				learningRate *= 0.5f;
 				printf("- Learning rate decreased(%f)\n", learningRate);
 			}
+			learningRate *= 0.6f;
 			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
 				cntVal,
 				loss, loss - last_validation_loss, lowest_validation_loss,
@@ -208,7 +210,6 @@ int cifar10()
 
 		// Test loss
 		{
-			MeasureTime m("Test");
 			pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&testImages));
 			pSoftmax->Pull();
 
