@@ -104,7 +104,7 @@ namespace ff
 		int r = jobIndex / ww;
 		int c = jobIndex % ww;
 
-		float v = 0.0;
+		float v = 0.0f;
 		for (int i = 0; i < xw; ++i)
 		{
 			v += x[i + r * xw] * w[c + i * ww];
@@ -120,7 +120,7 @@ namespace ff
 		int c = jobIndex % nWcol;
 
 		// wG = x.T * yG
-		float v = 0.0;
+		float v = 0.0f;
 		for (int i = 0; i < nXrow; ++i)
 		{
 			v += x[r + i * nXcol] * yG[c + i * nWcol];
@@ -136,7 +136,7 @@ namespace ff
 		int c = jobIndex % xGw;
 
 		// xG = yG * w.T
-		float v = 0.0;
+		float v = 0.0f;
 		for (int i = 0; i < yGw; ++i)
 		{
 			v += yG[i + r * yGw] * w[i + c * wTh];
@@ -207,12 +207,12 @@ namespace ff
 		relu_x[jobIndex] = fmaxf(x[jobIndex], 0.0);
 	}
 
-	__global__ void ReluG_Cuda(float* xG, const float* x, int nCol, int nJobs)
+	__global__ void ReluG_Cuda(float* xG, const float* yG, const float* x, int nCol, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
 
-		if (x[jobIndex] < 0.0) xG[jobIndex] = 0.0;
+		xG[jobIndex] = x[jobIndex] < 0.0f ? 0.0f : yG[jobIndex];
 	}
 
 	__global__ void ForwardSoftmax_Step1_Cuda(float* sum, const float* x, int nRow, int nCol)
@@ -220,7 +220,7 @@ namespace ff
 		int r = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (nRow <= r) return;
 
-		sum[0 + r * nCol] = 1e-8;
+		sum[0 + r * nCol] = 1e-8f;
 		for (int i = 0; i < nCol; ++i)
 		{
 			sum[0 + r * nCol] += exp(x[i + r * nCol]);
@@ -246,7 +246,7 @@ namespace ff
 		int c = index % nCol;
 
 		lossG[index] = softmax[index];
-		if (yLabel[r] == c) lossG[index] -= 1.0;
+		if (yLabel[r] == c) lossG[index] -= 1.0f;
 	}
 
 	__global__ void Dropout_Cuda(float* x, const float* dropoutMask, int nCol, int nJobs)
@@ -359,7 +359,7 @@ namespace ff
 			int nJobs = _xG._d1 * _xG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ComputeXg_Cuda << < block, threads >> > (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
+			ComputeXg_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_xG;
@@ -382,86 +382,30 @@ namespace ff
 		}
 	}
 
-	const CudaTensor* ReluLayer::Forward(const CudaTensor*)
+	const CudaTensor* ReluLayer::Forward(const CudaTensor* x)
 	{
-		return nullptr;
-	}
-
-	const CudaTensor* ReluLayer::Backward(const CudaTensor*, const int layerIndex)
-	{
-		return nullptr;
-	}
-
-	ReluFcLayer::ReluFcLayer(CudaNn* nn, int inDim, int outDim) : FcLayer(nn, inDim, outDim)
-	{
-	}
-
-	const CudaTensor* ReluFcLayer::Forward(const CudaTensor* x)
-	{
-		assert(x->_d0 == _w._d1);
-
 		_pX = x;
 		_xRelu.ResetTensor(_pX->_d0, _pX->_d1);
-		{
-			int nJobs = _xRelu._d1 * _xRelu._d0;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			Relu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, _xRelu._d0, nJobs);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-
-		_y.ResetTensor(_w._d0, _xRelu._d1);
-		{
-			// y = xw+b
-			int nJobs = _xRelu._d1 * _w._d0;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			LinearTransform_Cuda <<< block, threads >>> (_y._dataGpu, _xRelu._dataGpu, _w._dataGpu, _b._dataGpu, _xRelu._d0, _w._d0, nJobs);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-
-		return &_y;
+		int nJobs = _xRelu._d1 * _xRelu._d0;
+		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+		Relu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, _xRelu._d0, nJobs);
+		assert(cudaGetLastError() == cudaSuccess);
+		return &_xRelu;
 	}
 
-	const CudaTensor* ReluFcLayer::Backward(const CudaTensor* yG, const int layerIndex)
+	const CudaTensor* ReluLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		assert(yG->_d0 == _wG._d0);
-		{
-			int nJobs = _wG._d1 * _wG._d0;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ComputeWg_Cuda <<< block, threads >>> (_wG._dataGpu, _xRelu._dataGpu, yG->_dataGpu, _xRelu._d0, _xRelu._d1, _wG._d0, nJobs);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-
-		{
-			int numBlocks = (_b._d0 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ComputeBg_Cuda <<< block, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d0, yG->_d1);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-
+		assert(_pX->_d0 == yG->_d0 && _pX->_d1 == yG->_d1);
 		if (layerIndex > 0)
 		{
-			{
-				assert(yG->_d1 == _pX->_d1);
-				_xG.ResetTensor(_pX->_d0, _pX->_d1);
-				int nJobs = _xG._d1 * _xG._d0;
-				int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-				dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-				ComputeXg_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
-				assert(cudaGetLastError() == cudaSuccess);
-			}
-			{
-				int nJobs = _xG._d1 * _xG._d0;
-				int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-				dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-				//ReluG_Cuda <<< block, threads >>> (_xG._dataGpu, _pX->_dataGpu, _xG._d0, nJobs);
-				ReluG_Cuda <<< block, threads >>> (_xG._dataGpu, _xRelu._dataGpu, _xG._d0, nJobs);
-				assert(cudaGetLastError() == cudaSuccess);
-			}
+			_xG.ResetTensor(_xRelu._d0, _xRelu._d1);
+			int nJobs = yG->_d1 * yG->_d0;
+			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+			ReluG_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _pX->_dataGpu, yG->_d0, nJobs);
+			assert(cudaGetLastError() == cudaSuccess);
 		}
-
 		return &_xG;
 	}
 
@@ -611,9 +555,9 @@ namespace ff
 		return true;
 	}
 
-	bool CudaNn::AddReluFc(int inDim, int outDim)
+	bool CudaNn::AddRelu()
 	{
-		_layers.push_back(new ReluFcLayer(this, inDim, outDim));
+		_layers.push_back(new ReluLayer(this));
 		return true;
 	}
 

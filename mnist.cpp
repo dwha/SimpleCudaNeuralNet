@@ -129,9 +129,11 @@ int mnist()
 	nn.InitializeCudaNn("");
 	nn.AddFc(28 * 28, 1000);
 	nn.AddDropout(0.5);
-	nn.AddReluFc(1000, 1000);
+	nn.AddRelu();
+	nn.AddFc(1000, 1000);
 	nn.AddDropout(0.5);
-	nn.AddReluFc(1000, 10);
+	nn.AddRelu();
+	nn.AddFc(1000, 10);
 	nn.AddSoftmax();
 
 	const int numEpoch = 1000;

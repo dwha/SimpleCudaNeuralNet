@@ -9,7 +9,8 @@ int simple()
 	ff::CudaNn nn;
 	nn.AddFc(1000, 500);
 	nn.AddDropout(0.5);
-	nn.AddReluFc(500, 10);
+	nn.AddRelu();
+	nn.AddFc(500, 10);
 	nn.AddSumOfSquares();
 
 	ff::CudaTensor x(1000, 200);

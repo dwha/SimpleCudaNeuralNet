@@ -123,8 +123,9 @@ int cifar10()
 	nn.AddMaxPool(); // 16 * 16 * 32
 	nn.AddConv2d(3, 32, 64, 1, 1); // 16 * 16 * 64
 	nn.AddMaxPool(); // 8 * 8 * 64
-	nn.AddReluFc(4096, 2048);
-	nn.AddReluFc(2048, 10);
+	nn.AddFc(4096, 2048);
+	nn.AddRelu();
+	nn.AddFc(2048, 10);
 	nn.AddSoftmax();
 
 	float loss = 0.0f;

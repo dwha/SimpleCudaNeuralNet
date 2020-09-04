@@ -124,19 +124,11 @@ namespace ff
 		const CudaTensor* Forward(const CudaTensor*) override;
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
-	};
-
-	class ReluFcLayer : public FcLayer
-	{
-	public:
-		ReluFcLayer(CudaNn* nn, int inDim, int outDit);
-
-		const CudaTensor* Forward(const CudaTensor*) override;
-
-		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
 	public:
+		const CudaTensor* _pX;
 		CudaTensor _xRelu;
+		CudaTensor _xG;
 	};
 
 	class DropoutLayer : public CudaLayer
@@ -197,7 +189,7 @@ namespace ff
 
 		bool AddFc(int inDim, int outDim);
 
-		bool AddReluFc(int inDim, int outDim);
+		bool AddRelu();
 
 		bool AddDropout(float dropoutRatio);
 
