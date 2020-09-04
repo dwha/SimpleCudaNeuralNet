@@ -4,8 +4,8 @@ This is for studying both neural network and CUDA.
 I focused on simplicity and conciseness while coding. It is a self-studying result for better understanding of back-propagation algorithm. It'd be good if this C++ code fragment helps someone who has an interest in deep learning.
 
 ## Status
-#### Layer
-* 2D Convolutional (WIP)
+#### Layers (w/ He initialization)
+* 2D Convolutional
 * Fully connected
 
 #### Non-linearity

@@ -25,6 +25,8 @@ namespace ff
 
 		void ResetTensor(int d0, int d1 = 1, int d2 = 1, int d3 = 1);
 
+		void Reshape(int d0, int d1 = 1, int d2 = 1, int d3 = 1);
+
 		void SetRandom(const float multiplier = 1.0f);
 
 		void SetZero();
