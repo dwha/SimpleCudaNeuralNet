@@ -119,13 +119,9 @@ int cifar10()
 
 	ff::CudaNn nn;
 	nn.InitializeCudaNn("");
-	nn.AddConv2d(3, 3, 32, 1, 1); // 32 * 32 * 32
-	nn.AddMaxPool(); // 16 * 16 * 32
-	nn.AddConv2d(3, 32, 64, 1, 1); // 16 * 16 * 64
-	nn.AddMaxPool(); // 8 * 8 * 64
-	nn.AddFc(4096, 2048);
+	nn.AddConv2d(3, 3, 4, 1, 1); // 32 * 32 * 4 
 	nn.AddRelu();
-	nn.AddFc(2048, 10);
+	nn.AddFc(4096, 10);
 	nn.AddSoftmax();
 
 	float loss = 0.0f;

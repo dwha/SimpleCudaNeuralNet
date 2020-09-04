@@ -5,12 +5,16 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 
 ## Status
 #### Layer
+* 2D Convolutional (WIP)
 * Fully connected
-* Dropout regularisation
-	
+
 #### Non-linearity
 * Relu
 
+#### Regularisation
+* Max pooling (WIP)
+* Dropout
+	
 #### Loss
 * Sum of Squares 
 * Softmax

@@ -199,7 +199,7 @@ namespace ff
 		b[index] -= (learningRate * unbiased_m / (sqrtf(unbiased_v) + 1e-8f));
 	}
 
-	__global__ void Relu_Cuda(float* relu_x, const float* x, int nCol, int nJobs)
+	__global__ void Relu_Cuda(float* relu_x, const float* x, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -207,7 +207,7 @@ namespace ff
 		relu_x[jobIndex] = fmaxf(x[jobIndex], 0.0);
 	}
 
-	__global__ void ReluG_Cuda(float* xG, const float* yG, const float* x, int nCol, int nJobs)
+	__global__ void ReluG_Cuda(float* xG, const float* yG, const float* x, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -266,7 +266,7 @@ namespace ff
 
 	const CudaTensor* Conv2Layer::Forward(const CudaTensor* x)
 	{
-		assert(x->_d2 == _w._d2); // Expect correct # of input channels
+		assert(x->_d2 == _w._d2); // Check # of input channels
 
 		// (N - F) / stride + 1
 		int nCol = (x->_d0 + _padding * 2 - _w._d0) / _stride + 1;
@@ -275,6 +275,43 @@ namespace ff
 		// sx x sy x nOutChannel x sBatch 
 		_y.ResetTensor(nCol, nRow, _w._d3, x->_d3);
 
+		const_cast<CudaTensor*>(x)->PullFromGpu();
+		_y.PullFromGpu();
+		_w.PullFromGpu();
+
+		_pX = x;
+		for (int image = 0; image < _pX->_d3; ++image)
+		{
+			for (int outChannel = 0; outChannel < _w._d3; ++outChannel)
+			{
+				for (int inChannel = 0; inChannel < x->_d2; ++inChannel)
+				{
+					for (int rowY = 0; rowY < nRow; ++rowY)
+					{
+						for (int colY = 0; colY < nCol; ++colY)
+						{
+							float& y = _y._data[image * (_y._d2 * _y._d1 * _y._d0) + outChannel * (_y._d1 * _y._d0) + rowY * _y._d0 + colY];
+							y = 0.0f;
+
+							int startRowX = rowY * _stride - _padding;
+							int startColX = colY * _stride - _padding;
+							for (int rowX = startRowX; rowX < startRowX + _w._d1; ++rowX)
+							{
+								if (rowX < 0 || rowX >= _pX->_d1) continue;
+								for (int colX = startColX; colX < startColX + _w._d0; ++colX)
+								{
+									if (colX < 0 || colX >= _pX->_d0) continue;
+									y += _pX->_data[image * (_pX->_d2 * _pX->_d1 * _pX->_d0) + inChannel * (_pX->_d1 * _pX->_d0) + rowX * _pX->_d0 + colX] *
+										_w._data[outChannel * (_w._d2 * _w._d1 * _w._d0) + inChannel * (_w._d1 * _w._d0) + (rowX - startRowX) * _w._d0 + (colX - startColX)];
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		_y.PushToGpu();
 
 		return nullptr;
 	}
@@ -290,12 +327,12 @@ namespace ff
 
 	const CudaTensor* MaxPoolLayer::Forward(const CudaTensor* x)
 	{
-		return nullptr;
+		return x;
 	}
 
 	const CudaTensor* MaxPoolLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		return nullptr;
+		return yG;
 	}
 
 	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
@@ -385,25 +422,25 @@ namespace ff
 	const CudaTensor* ReluLayer::Forward(const CudaTensor* x)
 	{
 		_pX = x;
-		_xRelu.ResetTensor(_pX->_d0, _pX->_d1);
-		int nJobs = _xRelu._d1 * _xRelu._d0;
+		_xRelu.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
+		int nJobs = _xRelu._d0 * _xRelu._d1 * _xRelu._d2 * _xRelu._d3;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-		Relu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, _xRelu._d0, nJobs);
+		Relu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, nJobs);
 		assert(cudaGetLastError() == cudaSuccess);
 		return &_xRelu;
 	}
 
 	const CudaTensor* ReluLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		assert(_pX->_d0 == yG->_d0 && _pX->_d1 == yG->_d1);
+		assert(_xRelu._d0 == yG->_d0 && _xRelu._d1 == yG->_d1 && _xRelu._d2 == yG->_d2 && _xRelu._d3 == yG->_d3);
 		if (layerIndex > 0)
 		{
-			_xG.ResetTensor(_xRelu._d0, _xRelu._d1);
-			int nJobs = yG->_d1 * yG->_d0;
+			_xG.ResetTensor(_xRelu._d0, _xRelu._d1, _xRelu._d2, _xRelu._d3);
+			int nJobs = _xRelu._d0 * _xRelu._d1 * _xRelu._d2 * _xRelu._d3;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ReluG_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _pX->_dataGpu, yG->_d0, nJobs);
+			ReluG_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _pX->_dataGpu, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_xG;

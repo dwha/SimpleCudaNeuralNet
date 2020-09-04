@@ -77,7 +77,12 @@ namespace ff
 
 	public:
 		int _stride, _padding;
+		const CudaTensor* _pX;
+		CudaTensor _xG;
 		CudaTensor _w;
+		CudaTensor _wG;
+		CudaTensor _wG_m;
+		CudaTensor _wG_v;
 		CudaTensor _y;
 	};
 
