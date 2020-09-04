@@ -78,7 +78,7 @@ namespace ff
 		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
 
 	public:
-		int _stride, _padding;
+		int _kernelSize, _stride, _padding;
 		const CudaTensor* _pX;
 		CudaTensor _xG;
 		CudaTensor _w;

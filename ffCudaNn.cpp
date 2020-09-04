@@ -263,16 +263,89 @@ namespace ff
 		x[index] *= dropoutMask[index];
 	}
 
+	__global__ void ForwardConv2d_Cuda(
+		float* y, const float* x, const float* w, int nOutChannel, int nRowY, int nColY,
+		int nInChannel, int nRowX, int nColX, int kernelSize, int stride, int padding, int nJobs)
+	{
+		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (index >= nJobs) return;
+
+		int yIndex = index;
+		int image = index / (nOutChannel * nRowY * nColY);
+		index -= image * (nOutChannel * nRowY * nColY);
+		int outChannel = index / (nRowY * nColY);
+		index -= outChannel * (nRowY * nColY);
+		int rowY = index / nColY;
+		int colY = index % nColY;
+
+		y[yIndex] = 0.0f;
+		int startRowX = rowY * stride - padding;
+		int startColX = colY * stride - padding;
+		for (int inChannel = 0; inChannel < nInChannel; ++inChannel)
+		{
+			for (int rowX = startRowX; rowX < startRowX + kernelSize; ++rowX)
+			{
+				if (rowX < 0 || rowX >= nRowX) continue;
+				int xBaseIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX;
+				int wBaseIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + (rowX - startRowX) * kernelSize;
+				for (int colX = startColX; colX < startColX + kernelSize; ++colX)
+				{
+					if (colX < 0 || colX >= nColX) continue;
+					y[yIndex] += x[xBaseIndex + colX] * w[wBaseIndex + (colX - startColX)];
+				}
+			}
+		}
+	}
+
+	__global__ void BackwardConv2d_Cuda(
+		float* xG, float* wG, const float* x, const float* w, const float* yG,
+		int nOutChannel, int nRowY, int nColY,
+		int nInChannel, int nRowX, int nColX,
+		int kernelSize, int stride, int padding, int nJobs)
+	{
+		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (index >= nJobs) return;
+
+		int yIndex = index;
+		int image = index / (nOutChannel * nRowY * nColY);
+		index -= image * (nOutChannel * nRowY * nColY);
+		int outChannel = index / (nRowY * nColY);
+		index -= outChannel * (nRowY * nColY);
+		int rowY = index / nColY;
+		int colY = index % nColY;
+
+		float currYg = yG[yIndex];
+		int startRowX = rowY * stride - padding;
+		int startColX = colY * stride - padding;
+		for (int inChannel = 0; inChannel < nInChannel; ++inChannel)
+		{
+			for (int rowX = startRowX; rowX < startRowX + kernelSize; ++rowX)
+			{
+				if (rowX < 0 || rowX >= nRowX) continue;
+				int xBaseIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX;
+				int wBaseIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + (rowX - startRowX) * kernelSize;
+				for (int colX = startColX; colX < startColX + kernelSize; ++colX)
+				{
+					if (colX < 0 || colX >= nColX) continue;
+					atomicAdd(&xG[xBaseIndex + colX], w[wBaseIndex + (colX - startColX)] * currYg);
+					atomicAdd(&wG[wBaseIndex + (colX - startColX)], x[xBaseIndex + colX] * currYg);
+					//xG[xBaseIndex + colX] += w[wBaseIndex + (colX - startColX)] * currYg;
+					//wG[wBaseIndex + (colX - startColX)] += x[xBaseIndex + colX] * currYg;
+				}
+			}
+		}
+	}
+
 	///////////////////////////////////////////////////////////////////////
 	Conv2Layer::Conv2Layer(CudaNn* nn, int kernelSize, int nInChannel, int nOutChannel, int stride, int padding) :
-		CudaLayer(nn), _stride(stride), _padding(padding)
+		CudaLayer(nn), _kernelSize(kernelSize), _stride(stride), _padding(padding)
 	{
-		_w.ResetTensor(kernelSize, kernelSize, nInChannel, nOutChannel);
-		_w.SetRandom(1.0f / sqrtf(kernelSize * kernelSize * nInChannel * 0.5f)); // He initialization
-		_wG.ResetTensor(kernelSize, kernelSize, nInChannel, nOutChannel);
-		_wG_m.ResetTensor(kernelSize, kernelSize, nInChannel, nOutChannel);
+		_w.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
+		_w.SetRandom(1.0f / sqrtf(_kernelSize * _kernelSize * nInChannel * 0.5f)); // He initialization
+		_wG.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
+		_wG_m.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
 		_wG_m.SetZero();
-		_wG_v.ResetTensor(kernelSize, kernelSize, nInChannel, nOutChannel);
+		_wG_v.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
 		_wG_v.SetZero();
 	}
 
@@ -282,23 +355,31 @@ namespace ff
 
 		// (N - F) / stride + 1
 		_pX = x;
-		int nCol = (_pX->_d0 + _padding * 2 - _w._d0) / _stride + 1;
-		int nRow = (_pX->_d1 + _padding * 2 - _w._d1) / _stride + 1;
+		int nColY = (_pX->_d0 + _padding * 2 - _w._d0) / _stride + 1;
+		int nRowY = (_pX->_d1 + _padding * 2 - _w._d1) / _stride + 1;
 
 		// sx x sy x nOutChannel x sBatch 
-		_y.ResetTensor(nCol, nRow, _w._d3, _pX->_d3);
+		_y.ResetTensor(nColY, nRowY, _w._d3, _pX->_d3);
 
-		const_cast<CudaTensor*>(x)->PullFromGpu();
-		_y.PullFromGpu();
+#if 1
+		int nJobs = _y._d3 * _y._d2 * _y._d1 * _y._d0;
+		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+		dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
+		ForwardConv2d_Cuda<<<blocks, threads>>>(_y._dataGpu, _pX->_dataGpu, _w._dataGpu,
+			_y._d2, _y._d1, _y._d0, 
+			_pX->_d2, _pX->_d1, _pX->_d0, 
+			_kernelSize, _stride, _padding, nJobs);
+		assert(cudaGetLastError() == cudaSuccess);
+#else
+		const_cast<CudaTensor*>(_pX)->PullFromGpu();
 		_w.PullFromGpu();
-
-		for (int image = 0; image < _pX->_d3; ++image)
+		for (int image = 0; image < _y._d3; ++image)
 		{
-			for (int outChannel = 0; outChannel < _w._d3; ++outChannel)
+			for (int outChannel = 0; outChannel < _y._d2; ++outChannel)
 			{
-				for (int rowY = 0; rowY < nRow; ++rowY)
+				for (int rowY = 0; rowY < _y._d1; ++rowY)
 				{
-					for (int colY = 0; colY < nCol; ++colY)
+					for (int colY = 0; colY < _y._d0; ++colY)
 					{
 						float& y = _y._data[image * (_y._d2 * _y._d1 * _y._d0) + outChannel * (_y._d1 * _y._d0) + rowY * _y._d0 + colY];
 						y = 0.0f;
@@ -307,12 +388,12 @@ namespace ff
 						int startColX = colY * _stride - _padding;
 						for (int inChannel = 0; inChannel < _pX->_d2; ++inChannel)
 						{
-							for (int rowX = startRowX; rowX < startRowX + _w._d1; ++rowX)
+							for (int rowX = startRowX; rowX < startRowX + _kernelSize; ++rowX)
 							{
 								if (rowX < 0 || rowX >= _pX->_d1) continue;
 								int xBaseIndex = image * (_pX->_d2 * _pX->_d1 * _pX->_d0) + inChannel * (_pX->_d1 * _pX->_d0) + rowX * _pX->_d0;
 								int wBaseIndex = outChannel * (_w._d2 * _w._d1 * _w._d0) + inChannel * (_w._d1 * _w._d0) + (rowX - startRowX) * _w._d0;
-								for (int colX = startColX; colX < startColX + _w._d0; ++colX)
+								for (int colX = startColX; colX < startColX + _kernelSize; ++colX)
 								{
 									if (colX < 0 || colX >= _pX->_d0) continue;
 									y += _pX->_data[xBaseIndex + colX] * _w._data[wBaseIndex + (colX - startColX)];
@@ -323,48 +404,61 @@ namespace ff
 				}
 			}
 		}
-
 		_y.PushToGpu();
+#endif
 		return &_y;
 	}
 
 	const CudaTensor* Conv2Layer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		int nCol = (_pX->_d0 + _padding * 2 - _w._d0) / _stride + 1;
-		int nRow = (_pX->_d1 + _padding * 2 - _w._d1) / _stride + 1;
+		int nColY = (_pX->_d0 + _padding * 2 - _w._d0) / _stride + 1;
+		int nRowY = (_pX->_d1 + _padding * 2 - _w._d1) / _stride + 1;
 
 		_xG.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
 		// sx x sy x nOutChannel x sBatch 
-		const_cast<CudaTensor*>(yG)->Reshape(nCol, nRow, _w._d3, _pX->_d3);
+		const_cast<CudaTensor*>(yG)->Reshape(nColY, nRowY, _w._d3, _pX->_d3);
 
-		const_cast<CudaTensor*>(yG)->PullFromGpu();
+#if 1
 		_xG.SetZero();
 		_wG.SetZero();
+		int nJobs = yG->_d3 * yG->_d2 * yG->_d1 * yG->_d0;
+		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+		dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
+		BackwardConv2d_Cuda<<<blocks, threads>>>(_xG._dataGpu, _wG._dataGpu, _pX->_dataGpu, _w._dataGpu, yG->_dataGpu,
+			yG->_d2, yG->_d1, yG->_d0, 
+			_pX->_d2, _pX->_d1, _pX->_d0, 
+			_kernelSize, _stride, _padding, nJobs);
+		assert(cudaGetLastError() == cudaSuccess);
+#else
+		const_cast<CudaTensor*>(yG)->PullFromGpu();
+		const_cast<CudaTensor*>(_pX)->PullFromGpu();
+		_w.PullFromGpu();
 
-		for (int image = 0; image < _pX->_d3; ++image)
+		_xG.SetZero();
+		_wG.SetZero();
+		for (int image = 0; image < yG->_d3; ++image)
 		{
-			for (int outChannel = 0; outChannel < _w._d3; ++outChannel)
+			for (int outChannel = 0; outChannel < yG->_d2; ++outChannel)
 			{
-				for (int rowY = 0; rowY < nRow; ++rowY)
+				for (int rowY = 0; rowY < yG->_d1; ++rowY)
 				{
-					for (int colY = 0; colY < nCol; ++colY)
+					for (int colY = 0; colY < yG->_d0; ++colY)
 					{
 						float currYg = yG->_data[image * (yG->_d2 * yG->_d1 * yG->_d0) + outChannel * (yG->_d1 * yG->_d0) + rowY * yG->_d0 + colY];
-
 						int startRowX = rowY * _stride - _padding;
 						int startColX = colY * _stride - _padding;
 						for (int inChannel = 0; inChannel < _pX->_d2; ++inChannel)
 						{
-							for (int rowX = startRowX; rowX < startRowX + _w._d1; ++rowX)
+							for (int rowX = startRowX; rowX < startRowX + _kernelSize; ++rowX)
 							{
 								if (rowX < 0 || rowX >= _pX->_d1) continue;
 								int xBaseIndex = image * (_pX->_d2 * _pX->_d1 * _pX->_d0) + inChannel * (_pX->_d1 * _pX->_d0) + rowX * _pX->_d0;
 								int wBaseIndex = outChannel * (_w._d2 * _w._d1 * _w._d0) + inChannel * (_w._d1 * _w._d0) + (rowX - startRowX) * _w._d0;
-								for (int colX = startColX; colX < startColX + _w._d0; ++colX)
+								for (int colX = startColX; colX < startColX + _kernelSize; ++colX)
 								{
 									if (colX < 0 || colX >= _pX->_d0) continue;
+									_xG._data[xBaseIndex + colX] += _w._data[wBaseIndex + (colX - startColX)] * currYg;
 									_wG._data[wBaseIndex + (colX - startColX)] += _pX->_data[xBaseIndex + colX] * currYg;
-									_xG._data[xBaseIndex + colX] += _wG._data[wBaseIndex + (colX - startColX)] * currYg;
 								}
 							}
 						}
@@ -372,9 +466,9 @@ namespace ff
 				}
 			}
 		}
-		
 		_xG.PushToGpu();
 		_wG.PushToGpu();
+#endif
 		return &_xG;
 	}
 
@@ -383,7 +477,9 @@ namespace ff
 		int nJobs = _w._d0 * _w._d1 * _w._d2 * _w._d3;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-		UpdateWs_Cuda <<<block, threads >>> (learningRate, beta1, beta2, beta1t, beta2t, _w._dataGpu, _wG._dataGpu, _wG_m._dataGpu, _wG_v._dataGpu, nJobs);
+		UpdateWs_Cuda <<< block, threads >>> (learningRate, beta1, beta2, beta1t, beta2t, _w._dataGpu, _wG._dataGpu, _wG_m._dataGpu, _wG_v._dataGpu, nJobs);
+		cudaError_t err = cudaGetLastError();
+		assert(err == cudaSuccess);
 		assert(cudaGetLastError() == cudaSuccess);
 	}
 

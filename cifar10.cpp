@@ -109,7 +109,7 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 
 int cifar10()
 {
-	const int kBatchSize = 200;
+	const int kBatchSize = 50;
 
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
@@ -121,7 +121,17 @@ int cifar10()
 	nn.InitializeCudaNn("");
 	nn.AddConv2d(3, 3, 4, 1, 1); // 32 * 32 * 4 
 	nn.AddRelu();
-	nn.AddFc(4096, 10);
+	nn.AddConv2d(3, 4, 4, 1, 1); // 32 * 32 * 4 
+	nn.AddRelu();
+	nn.AddConv2d(3, 4, 4, 1, 1); // 32 * 32 * 4 
+	nn.AddRelu();
+	nn.AddConv2d(3, 4, 4, 1, 1); // 32 * 32 * 4 
+	nn.AddRelu();
+	nn.AddFc(4096, 2048);
+	nn.AddRelu();
+	nn.AddFc(2048, 1024);
+	nn.AddRelu();
+	nn.AddFc(1024, 10);
 	nn.AddSoftmax();
 
 	float loss = 0.0f;
@@ -137,7 +147,7 @@ int cifar10()
 
 	char buffer[2048];
 	const int numEpoch = 10000;
-	float learningRate = 0.001f;
+	float learningRate = 0.00001f;
 	printf("* Initial learning rate(%f)\n", learningRate);
 	for (int i = 0; i < numEpoch; ++i)
 	{
