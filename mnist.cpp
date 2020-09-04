@@ -42,7 +42,7 @@ void LoadMnistData(const char* imageFile, const char* labelFile, const int batch
 				images[i]._data[k + j * nPixels] = imageRaw[(i * batchSize + j) * nPixels + k] / 255.0f;
 			}
 		}
-		images[i].Push();
+		images[i].PushToGpu();
 		nImages2 -= batchSize;
 	}
 	delete[] imageRaw;
@@ -68,7 +68,7 @@ void LoadMnistData(const char* imageFile, const char* labelFile, const int batch
 		{
 			labels[i]._data[j] = labelRaw[i * batchSize + j];
 		}
-		labels[i].Push();
+		labels[i].PushToGpu();
 		nLabels -= batchSize;
 	}
 	delete[] labelRaw;
@@ -131,9 +131,7 @@ int mnist()
 	nn.AddDropout(0.5);
 	nn.AddReluFc(1000, 1000);
 	nn.AddDropout(0.5);
-	nn.AddReluFc(1000, 500);
-	nn.AddDropout(0.5);
-	nn.AddReluFc(500, 10);
+	nn.AddReluFc(1000, 10);
 	nn.AddSoftmax();
 
 	const int numEpoch = 1000;
@@ -151,7 +149,7 @@ int mnist()
 		}
 
 		ff::CudaTensor* softmax = const_cast<ff::CudaTensor*>(nn.Forward(&testImages[0]));
-		softmax->Pull();
+		softmax->PullFromGpu();
 
 		float loss = 0.0;
 		for (int j = 0; j < testImages[0]._d1; ++j)

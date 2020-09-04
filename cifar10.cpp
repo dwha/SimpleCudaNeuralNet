@@ -29,7 +29,7 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 {
 	const int kTrainingDataSize = 50000;
 	const int kTestDataSize = 10000;
-	const int kNumBytesPerChannel = 1024;
+	const int kNumBytesPerChannel = 1024; // 32 * 32
 	int numBatches = (kTrainingDataSize + trainingBatchSize - 1) / trainingBatchSize;
 	trainingImages.resize(numBatches);
 	trainingLabels.resize(numBatches);
@@ -37,13 +37,11 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 	for (int i = 0; i < numBatches; ++i)
 	{
 		int currBatchSize = (trainingBatchSize < nLeft ? trainingBatchSize : nLeft);
-		//trainingImages[i].ResetTensor(32, 32, 3, currBatchSize);
-		trainingImages[i].ResetTensor(kNumBytesPerChannel * 3, currBatchSize);
+		trainingImages[i].ResetTensor(32, 32, 3, currBatchSize);
 		trainingLabels[i].ResetTensor(currBatchSize);
 		nLeft -= trainingBatchSize;
 	}
-	//testImages.ResetTensor(32, 32, 3, kTestDataSize);
-	testImages.ResetTensor(kNumBytesPerChannel * 3, kTestDataSize);
+	testImages.ResetTensor(32, 32, 3, kTestDataSize);
 	testLabels.ResetTensor(kTestDataSize);
 
 	int counter = 0;
@@ -84,8 +82,8 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 	}
 	for (size_t i = 0; i < trainingImages.size(); ++i)
 	{
-		trainingImages[i].Push();
-		trainingLabels[i].Push();
+		trainingImages[i].PushToGpu();
+		trainingLabels[i].PushToGpu();
 	}
 
 	FILE* fp = fopen("cifar-10/test_batch.bin", "rb");
@@ -105,8 +103,8 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 			}
 		}
 	}
-	testImages.Push();
-	testLabels.Push();
+	testImages.PushToGpu();
+	testLabels.PushToGpu();
 }
 
 int cifar10()
@@ -121,7 +119,10 @@ int cifar10()
 
 	ff::CudaNn nn;
 	nn.InitializeCudaNn("");
-	nn.AddFc(1024 * 3, 4096);
+	nn.AddConv2d(3, 3, 32, 1, 1); // 32 * 32 * 32
+	nn.AddMaxPool(); // 16 * 16 * 32
+	nn.AddConv2d(3, 32, 64, 1, 1); // 16 * 16 * 64
+	nn.AddMaxPool(); // 8 * 8 * 64
 	nn.AddReluFc(4096, 2048);
 	nn.AddReluFc(2048, 10);
 	nn.AddSoftmax();
@@ -170,7 +171,7 @@ int cifar10()
 			{
 				cntVal += trainingImages[j]._d1;
 				pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&trainingImages[j]));
-				pSoftmax->Pull();
+				pSoftmax->PullFromGpu();
 				for (int k = 0; k < trainingImages[j]._d1; ++k)
 				{
 					loss += -logf(pSoftmax->_data[static_cast<int>(trainingLabels[j]._data[k]) + pSoftmax->_d0 * k]);
@@ -211,7 +212,7 @@ int cifar10()
 		// Test loss
 		{
 			pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&testImages));
-			pSoftmax->Pull();
+			pSoftmax->PullFromGpu();
 
 			loss = 0.0f;
 			for (int j = 0; j < testImages._d1; ++j)

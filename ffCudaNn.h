@@ -25,15 +25,15 @@ namespace ff
 
 		void ResetTensor(int d0, int d1 = 1, int d2 = 1, int d3 = 1);
 
-		void Random(const float multiplier = 1.0f);
+		void SetRandom(const float multiplier = 1.0f);
 
-		void Zero();
+		void SetZero();
 
-		void Dropout(float ratio);
+		void SetDropoutMask(float zeroRatio);
 
-		void Push();
+		void PushToGpu();
 
-		void Pull();
+		void PullFromGpu();
 
 	public:
 		int _d0, _d1, _d2, _d3, _dataSize;
@@ -50,6 +50,10 @@ namespace ff
 
 		virtual ~CudaLayer() {}
 
+		//// x2 is for back-propagation.
+		//// x2 is nullptr at the first-layer and usually the same as x, except ReluLayer.
+		//virtual const CudaTensor* Forward(const CudaTensor* x, const CudaTensor* x2 = nullptr) = 0;
+
 		virtual const CudaTensor* Forward(const CudaTensor*) = 0;
 
 		virtual const CudaTensor* Backward(const CudaTensor*, const int layerIndex) = 0;
@@ -58,6 +62,33 @@ namespace ff
 
 	public:
 		CudaNn* _nn;
+	};
+
+	class Conv2Layer : public CudaLayer
+	{
+	public:
+		Conv2Layer(CudaNn* nn, int kernelSize, int nInChannel, int nOutChannel, int stride, int padding);
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
+
+	public:
+		int _stride, _padding;
+		CudaTensor _w;
+		CudaTensor _y;
+	};
+
+	class MaxPoolLayer : public CudaLayer
+	{
+	public:
+		MaxPoolLayer(CudaNn* nn) : CudaLayer(nn) {}
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 	};
 
 	class FcLayer : public CudaLayer
@@ -83,6 +114,16 @@ namespace ff
 		CudaTensor _bG_m;
 		CudaTensor _bG_v;
 		CudaTensor _y;
+	};
+
+	class ReluLayer : public CudaLayer
+	{
+	public:
+		ReluLayer(CudaNn* nn) : CudaLayer(nn) {}
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 	};
 
 	class ReluFcLayer : public FcLayer
@@ -149,6 +190,10 @@ namespace ff
 		~CudaNn();
 
 		bool InitializeCudaNn(const char* desc);
+
+		bool AddConv2d(int kernelSize, int nInChannel, int nOutChannel, int stride, int padding);
+
+		bool AddMaxPool();
 
 		bool AddFc(int inDim, int outDim);
 

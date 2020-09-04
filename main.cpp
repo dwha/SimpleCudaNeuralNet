@@ -14,8 +14,8 @@ int simple()
 
 	ff::CudaTensor x(1000, 200);
 	ff::CudaTensor y(10, 200);
-	x.Random();
-	y.Random();
+	x.SetRandom();
+	y.SetRandom();
 
 	float learningRate = 0.0001f;
 	const ff::CudaTensor* yPred = nullptr;
@@ -29,7 +29,7 @@ int simple()
 		}
 
 		yPred = nn.Forward(&x);
-		const_cast<ff::CudaTensor*>(yPred)->Pull();
+		const_cast<ff::CudaTensor*>(yPred)->PullFromGpu();
 
 		float loss = 0.0;
 		for (int r = 0; r < yPred->_d1; ++r)
@@ -48,7 +48,7 @@ int simple()
 
 int main()
 {
-	return cifar10();
-	//return mnist();
+	//return cifar10();
+	return mnist();
 	//return simple();
 }
