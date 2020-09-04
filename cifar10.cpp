@@ -109,7 +109,7 @@ void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingIma
 
 int cifar10()
 {
-	const int kBatchSize = 50;
+	const int kBatchSize = 100;
 
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
@@ -119,13 +119,13 @@ int cifar10()
 
 	ff::CudaNn nn;
 	nn.InitializeCudaNn("");
-	nn.AddConv2d(3, 3, 4, 1, 1); // 32 * 32 * 4 
+	nn.AddConv2d(3, 3, 16, 1, 1); // 32 * 32 * 16
 	nn.AddRelu();
-	nn.AddConv2d(3, 4, 4, 1, 1); // 32 * 32 * 4 
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 16, 32, 1, 1); // 16 * 16 * 23 
 	nn.AddRelu();
-	nn.AddConv2d(3, 4, 4, 1, 1); // 32 * 32 * 4 
-	nn.AddRelu();
-	nn.AddConv2d(3, 4, 4, 1, 1); // 32 * 32 * 4 
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 32, 64, 1, 1); // 8 * 8 * 64
 	nn.AddRelu();
 	nn.AddFc(4096, 2048);
 	nn.AddRelu();
@@ -147,7 +147,7 @@ int cifar10()
 
 	char buffer[2048];
 	const int numEpoch = 10000;
-	float learningRate = 0.00001f;
+	float learningRate = 0.0001f;
 	printf("* Initial learning rate(%f)\n", learningRate);
 	for (int i = 0; i < numEpoch; ++i)
 	{
@@ -176,10 +176,10 @@ int cifar10()
 			int cntVal = 0;
 			for (int j = currValidationDataIndex; j < currValidationDataIndex + numValidationData; ++j)
 			{
-				cntVal += trainingImages[j]._d1;
+				cntVal += trainingImages[j]._d3;
 				pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&trainingImages[j]));
 				pSoftmax->PullFromGpu();
-				for (int k = 0; k < trainingImages[j]._d1; ++k)
+				for (int k = 0; k < trainingImages[j]._d3; ++k)
 				{
 					loss += -logf(pSoftmax->_data[static_cast<int>(trainingLabels[j]._data[k]) + pSoftmax->_d0 * k]);
 				}
@@ -196,10 +196,10 @@ int cifar10()
 			if (loss > last_validation_loss)
 			{
 				// Learning rate decay
-				learningRate *= 0.5f;
-				printf("- Learning rate decreased(%f)\n", learningRate);
+				//learningRate *= 0.5f;
+				//printf("- Learning rate decreased(%f)\n", learningRate);
 			}
-			learningRate *= 0.6f;
+			learningRate *= 0.8f;
 			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
 				cntVal,
 				loss, loss - last_validation_loss, lowest_validation_loss,
@@ -222,11 +222,11 @@ int cifar10()
 			pSoftmax->PullFromGpu();
 
 			loss = 0.0f;
-			for (int j = 0; j < testImages._d1; ++j)
+			for (int j = 0; j < testImages._d3; ++j)
 			{
 				loss += -logf(pSoftmax->_data[static_cast<int>(testLabels._data[j]) + pSoftmax->_d0 * j]);
 			}
-			loss /= testImages._d1;
+			loss /= testImages._d3;
 			if (0 == i) last_test_loss = loss;
 			if (loss < lowest_test_loss)
 			{

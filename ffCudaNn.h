@@ -96,6 +96,12 @@ namespace ff
 		const CudaTensor* Forward(const CudaTensor*) override;
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+	public:
+		const CudaTensor* _pX;
+		CudaTensor _maxIndex;
+		CudaTensor _xG;
+		CudaTensor _y;
 	};
 
 	class FcLayer : public CudaLayer
