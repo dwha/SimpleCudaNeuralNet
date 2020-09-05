@@ -85,6 +85,10 @@ namespace ff
 		CudaTensor _wG;
 		CudaTensor _wG_m;
 		CudaTensor _wG_v;
+		CudaTensor _b;
+		CudaTensor _bG;
+		CudaTensor _bG_m;
+		CudaTensor _bG_v;
 		CudaTensor _y;
 	};
 

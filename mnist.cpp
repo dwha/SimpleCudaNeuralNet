@@ -125,15 +125,14 @@ int mnist()
 	LoadMnistData("mnist/train-images.idx3-ubyte", "mnist/train-labels.idx1-ubyte", kBatchSize, trainingImages, trainingLabels);
 	LoadMnistData("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", kBatchSize, testImages, testLabels);
 
-#if 1
+#if 0
 	ff::CudaNn nn;
-	nn.AddFc(28 * 28, 1000);
+	nn.AddFc(28 * 28, 1024);
+	nn.AddRelu();
+	nn.AddFc(1024, 2048);
 	nn.AddDropout(0.5);
 	nn.AddRelu();
-	nn.AddFc(1000, 1000);
-	nn.AddDropout(0.5);
-	nn.AddRelu();
-	nn.AddFc(1000, 10);
+	nn.AddFc(2048, 10);
 	nn.AddSoftmax();
 #else
 	for (size_t i = 0; i < trainingImages.size(); ++i)
@@ -144,29 +143,28 @@ int mnist()
 	{
 		testImages[i].Reshape(28, 28, 1, testImages[i]._dataSize / (28 * 28));
 	}
-	ff::CudaNn nn;
+	ff::CudaNn nn; // total parameters: 873,536
 	nn.AddConv2d(3, 1, 64, 1, 1);			// 28 * 28 * 64
 	nn.AddRelu();
 	nn.AddConv2d(3, 64, 64, 1, 1);			// 28 * 28 * 64 
 	nn.AddRelu();
-	nn.AddMaxPool();						// 14 * 14 * 32 
-	nn.AddConv2d(3, 64, 32, 1, 1);
+	nn.AddMaxPool();						
+	nn.AddConv2d(3, 64, 32, 1, 1);			// 14 * 14 * 32	
 	nn.AddRelu();
-	nn.AddMaxPool();						// 7 * 7 * 32 
+	nn.AddMaxPool();						
 	nn.AddConv2d(3, 32, 16, 1, 1);			// 7 * 7 * 16
 	nn.AddRelu();
 	nn.AddFc(784, 1024);
 	nn.AddRelu();
 	nn.AddFc(1024, 10);
 	nn.AddSoftmax();
-
 #endif
 
 	const int numEpoch = 1000;
 	const size_t numBatch = trainingImages.size();
-
-	float learningRate = 0.00001f;
 	float lowest_loss = 1e8f;
+
+	float learningRate = 0.0001f;
 	for (int i = 0; i < numEpoch; ++i)
 	{
 		for (size_t j = 0; j < numBatch; ++j)
@@ -188,7 +186,9 @@ int mnist()
 			for (int k = 0; k < softmax->_d1; ++k)
 			{
 				++numTestImages;
-				loss += -logf(softmax->_data[static_cast<int>(testLabels[j]._data[k]) + softmax->_d0 * k]);
+				float val = softmax->_data[static_cast<int>(testLabels[j]._data[k]) + softmax->_d0 * k];
+				assert(val > 0.0f);
+				loss += -logf(val);
 			}
 
 			int t1, t3, t5;
@@ -202,10 +202,10 @@ int mnist()
 		{
 			lowest_loss = loss;
 		}
-		else
+		//else
 		{
 			// Learning rate decay
-			learningRate *= 0.4f;
+			learningRate *= 0.8f;
 		}
 
 		printf("Epoch[%03d] Test[%d](Loss: %f/%f, Top1: %d, Top3: %d, Top5: %d)\n", i+1, numTestImages, loss, lowest_loss,

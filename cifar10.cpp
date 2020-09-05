@@ -101,14 +101,9 @@ int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector
 		assert(labels[i]._d0 == pSoftmax->_d1);
 		for (int j = 0; j < pSoftmax->_d1; ++j)
 		{
-			if (pSoftmax->_data[static_cast<int>(labels[i]._data[j]) + pSoftmax->_d0 * j] <= 0.0f)
-			{
-				printf("log(0)\n");
-			}
-			else
-			{
-				loss += -logf(pSoftmax->_data[static_cast<int>(labels[i]._data[j]) + pSoftmax->_d0 * j]);
-			}
+			float val = pSoftmax->_data[static_cast<int>(labels[i]._data[j]) + pSoftmax->_d0 * j];
+			assert(val > 0.0f);
+			loss += -logf(val);
 		}
 		int t1, t3, t5;
 		CheckAccuracy(pSoftmax, labels[i], t1, t3, t5);
@@ -137,7 +132,7 @@ int cifar10()
 	std::vector<ff::CudaTensor> testLabels;
 	LoadCifar10(kBatchSize, 10000, testDataFilenames, testImages, testLabels);
 
-	ff::CudaNn nn;
+	ff::CudaNn nn; // total parameters: 6,404,800
 	nn.AddConv2d(3, 3, 64, 1, 1);		// 32 * 32 * 64
 	nn.AddRelu();
 	nn.AddConv2d(3, 64, 64, 1, 1);		// 32 * 32 * 64
@@ -167,7 +162,7 @@ int cifar10()
 
 	char buffer[2048];
 	const int numEpoch = 10000;
-	float learningRate = 0.001f;
+	float learningRate = 0.000001f;
 	printf("* Initial learning rate(%f)\n", learningRate);
 	for (int i = 0; i < numEpoch; ++i)
 	{
@@ -186,10 +181,9 @@ int cifar10()
 				nn.Forward(&trainingImages[j], true);
 				nn.Backward(&trainingLabels[j]);
 				nn.UpdateWs(learningRate);
+				//nn.Pull();
 			}
 		}
-
-		nn.Pull();
 
 		// Validation loss
 		{
@@ -206,9 +200,9 @@ int cifar10()
 			{
 				// Learning rate decay
 				//learningRate *= 0.5f;
-				//printf("- Learning rate decreased(%f)\n", learningRate);
+				printf("- Learning rate decreased(%f)\n", learningRate);
 			}
-			learningRate *= 0.65f;
+			learningRate *= 0.995f; // learning rate decay
 			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
 				testCounter,
 				loss, loss - last_validation_loss, lowest_validation_loss,

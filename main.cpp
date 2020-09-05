@@ -6,21 +6,42 @@ int cifar10();
 
 int simple()
 {
+#if 1
 	ff::CudaNn nn;
-	nn.AddFc(1000, 500);
+	nn.AddFc(1000, 4096);
+	nn.AddFc(4096, 1024);
 	nn.AddDropout(0.5);
 	nn.AddRelu();
-	nn.AddFc(500, 10);
+	nn.AddFc(1024, 1024);
+	nn.AddRelu();
+	nn.AddFc(1024, 10);
 	nn.AddSumOfSquares();
 
-	ff::CudaTensor x(1000, 200);
-	ff::CudaTensor y(10, 200);
+	ff::CudaTensor x(1000, 256);
+	ff::CudaTensor y(10, 256);
 	x.SetRandom();
 	y.SetRandom();
+#else
+	ff::CudaNn nn;
+	nn.AddConv2d(3, 1, 8, 1, 1);		// 8 * 8 * 8
+	nn.AddRelu();
+	nn.AddConv2d(3, 8, 16, 1, 1);		// 8 * 8 * 16
+	nn.AddRelu();
+	nn.AddConv2d(3, 16, 16, 1, 1);		// 8 * 8 * 16
+	nn.AddRelu();
+	nn.AddMaxPool();					// 4 * 4 * 16
+	nn.AddFc(256, 10);
+	nn.AddSumOfSquares();
 
-	float learningRate = 0.0001f;
+	ff::CudaTensor x(8, 8, 1, 256);
+	ff::CudaTensor y(10, 256);
+	x.SetRandom();
+	y.SetRandom();
+#endif
+
+	float learningRate = 0.00001f;
 	const ff::CudaTensor* yPred = nullptr;
-	for (int i = 0; i < 500; ++i)
+	for (int i = 0; i < 10000; ++i)
 	{
 		for (int j = 0; j < 10; ++j)
 		{
@@ -42,7 +63,8 @@ int simple()
 				loss += (diff * diff);
 			}
 		}
-		printf("loss: %f\n", loss);
+		printf("[%05d]loss: %f\n", i, loss / yPred->_d1);
+
 	}
 	return 0;
 }
