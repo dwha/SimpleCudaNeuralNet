@@ -221,26 +221,25 @@ namespace ff
 		xG[jobIndex] = x[jobIndex] < 0.0f ? 0.0f : yG[jobIndex];
 	}
 
-	__global__ void ForwardSoftmax_Step1_Cuda(float* sum, const float* x, int nRow, int nCol)
+	__global__ void ForwardSoftmax_Cuda(float* softmax , const float* x, int nRow, int nCol)
 	{
 		int r = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (nRow <= r) return;
 
-		sum[0 + r * nCol] = 1e-8f;
-		for (int i = 0; i < nCol; ++i)
+		int baseIndex = r * nCol;
+		float maxValue = x[baseIndex];
+		for (int i = 1; i < nCol; ++i)
 		{
-			sum[0 + r * nCol] += exp(x[i + r * nCol]);
+			maxValue = max(maxValue, x[baseIndex + i]);
 		}
-	}
-
-	__global__ void ForwardSoftmax_Step2_Cuda(float* softmax, const float* sum, const float* x, int nRow, int nCol)
-	{
-		int r = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (nRow <= r) return;
-
+		float sum = 0.0f;
 		for (int i = 0; i < nCol; ++i)
 		{
-			softmax[i + r * nCol] = exp(x[i + r * nCol]) / sum[0 + r * nCol];
+			sum += expf(x[baseIndex + i] - maxValue);
+		}
+		for (int i = 0; i < nCol; ++i)
+		{
+			softmax[baseIndex + i] = expf(x[baseIndex + i] - maxValue) / sum;
 		}
 	}
 
@@ -336,13 +335,61 @@ namespace ff
 		}
 	}
 
-	__global__ void ForwardMaxPool_Cuda(float* y, const float* x)
+	__global__ void ForwardMaxPool_Cuda(float* y, float* maxIndex, const float* x, int nImages, int nOutChannel, int nRow, int nCol)
 	{
-		//int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int nJobs = nImages * nOutChannel * nRow * nCol;
+		if (nJobs <= index) return;
+
+		int yIndex = index;
+		int image = index / (nOutChannel * nRow * nCol);
+		index -= image * (nOutChannel * nRow * nCol);
+		int outChannel = index / (nRow * nCol);
+		index -= outChannel * (nRow * nCol);
+		int row = index / nCol;
+		int col = index % nCol;
+
+		int xIndex = image * (nOutChannel * nRow * nCol * 4) + outChannel * (nRow * nCol * 4) + row * nCol * 2 + col * 2;
+		float maxVal = x[xIndex], maxIdx = 0;
+		if (maxVal < x[xIndex + 1])
+		{
+			maxIdx = (float)1;
+			maxVal = x[xIndex + 1];
+		}
+		if (maxVal < x[xIndex + nCol * 2])
+		{
+			maxIdx = (float)(nCol * 2);
+			maxVal = x[xIndex + nCol * 2];
+		}
+		if (maxVal < x[xIndex + nCol * 2 + 1])
+		{
+			maxIdx = (float)(nCol * 2 + 1);
+			maxVal = x[xIndex + nCol * 2 + 1];
+		}
+		maxIndex[yIndex] = maxIdx;
+		y[yIndex] = maxVal;
 	}
 
-	__global__ void BackwardMaxPool_Cuda(float* y, const float* x)
+	__global__ void BackwardMaxPool_Cuda(float* xG, const float* yG, const float* maxIndex, int nImages, int nOutChannel, int nRow, int nCol)
 	{
+		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int nJobs = nImages * nOutChannel * nRow * nCol;
+		if (nJobs <= index) return;
+
+		int yGindex = index;
+		int image = index / (nOutChannel * nRow * nCol);
+		index -= image * (nOutChannel * nRow * nCol);
+		int outChannel = index / (nRow * nCol);
+		index -= outChannel * (nRow * nCol);
+		int row = index / nCol;
+		int col = index % nCol;
+
+		int xGindex = image * (nOutChannel * nRow * nCol * 4) + outChannel * (nRow * nCol * 4) + row * nCol * 2 + col * 2;
+		xG[xGindex] = 0.0f;
+		xG[xGindex + 1] = 0.0f;
+		xG[xGindex + nCol * 2] = 0.0f;
+		xG[xGindex + nCol * 2 + 1] = 0.0f;
+		xG[xGindex + (int)maxIndex[yGindex]] = yG[yGindex];
 	}
 
 	///////////////////////////////////////////////////////////////////////
@@ -492,9 +539,14 @@ namespace ff
 		assert(cudaGetLastError() == cudaSuccess);
 	}
 
-	float max(float a, float b)
+	void Conv2Layer::Pull()
 	{
-		return a > b ? a : b;
+		_xG.PullFromGpu();
+		_w.PullFromGpu();
+		_wG.PullFromGpu();
+		_wG_m.PullFromGpu();
+		_wG_v.PullFromGpu();
+		_y.PullFromGpu();
 	}
 
 	const CudaTensor* MaxPoolLayer::Forward(const CudaTensor* x)
@@ -504,11 +556,12 @@ namespace ff
 		_y.ResetTensor(x->_d0 / 2, x->_d1 / 2, x->_d2, x->_d3);
 		_maxIndex.ResetTensor(_y._d0, _y._d1, _y._d2, _y._d3);
 
-		//int nJobs = _y._d0 * _y._d1 * _y._d2 * _y._d3;
-		//int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-		//dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-		//ForwardMaxPool_Cuda <<< block, threads >>> (_y._dataGpu, _pX->_dataGpu);
-
+#if 0
+		int nJobs = _y._d0 * _y._d1 * _y._d2 * _y._d3;
+		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+		ForwardMaxPool_Cuda <<< block, threads >>> (_y._dataGpu, _maxIndex._dataGpu, _pX->_dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
+#else 
 		const_cast<CudaTensor*>(_pX)->PullFromGpu();
 		for (int image = 0; image < _y._d3; ++image)
 		{
@@ -519,7 +572,7 @@ namespace ff
 					for (int col = 0; col < _y._d0; ++col)
 					{
 						int yIndex = image * (_y._d2 * _y._d1 * _y._d0) + outChannel * (_y._d1 * _y._d0) + row * _y._d0 + col;
-						int xIndex = image * (_y._d2 * _y._d1 * _y._d0) + outChannel * (_y._d1 * _y._d0) + 2 * row * _y._d0 + 2 * col;
+						int xIndex = image * (_y._d2 * _y._d1 * _y._d0 * 4) + outChannel * (_y._d1 * _y._d0 * 4) + 2 * row * _y._d0 + 2 * col;
 						float maxVal = _pX->_data[xIndex], maxIndex = 0;
 						if (maxVal < _pX->_data[xIndex + 1])
 						{
@@ -542,17 +595,22 @@ namespace ff
 				}
 			}
 		}
-
 		_maxIndex.PushToGpu();
 		_y.PushToGpu();
+#endif
 		return &_y;
 	}
 
 	const CudaTensor* MaxPoolLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		const_cast<CudaTensor*>(yG)->PullFromGpu();
-
 		_xG.ResetTensor(2 * yG->_d0, 2 * yG->_d1, yG->_d2, yG->_d3);
+#if 1
+		int nJobs = yG->_d0 * yG->_d1 * yG->_d2 * yG->_d3;
+		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+		BackwardMaxPool_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _maxIndex._dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
+#else
+		const_cast<CudaTensor*>(yG)->PullFromGpu();
 		for (int image = 0; image < yG->_d3; ++image)
 		{
 			for (int outChannel = 0; outChannel < yG->_d2; ++outChannel)
@@ -562,7 +620,7 @@ namespace ff
 					for (int col = 0; col < yG->_d0; ++col)
 					{
 						int yGindex = image * (yG->_d2 * yG->_d1 * yG->_d0) + outChannel * (yG->_d1 * yG->_d0) + row * yG->_d0 + col;
-						int xGindex = image * (_xG._d2 * _xG._d1 * _xG._d0) + outChannel * (_xG._d1 * _xG._d0) + 2 * row * _xG._d0 + 2 * col;
+						int xGindex = image * (_xG._d2 * _xG._d1 * _xG._d0 * 4) + outChannel * (_xG._d1 * _xG._d0 * 4) + row * _xG._d0 * 2 + col * 2;
 						_xG._data[xGindex] = 0.0f;
 						_xG._data[xGindex + 1] = 0.0f;
 						_xG._data[xGindex + _xG._d0] = 0.0f;
@@ -573,7 +631,15 @@ namespace ff
 			}
 		}
 		_xG.PushToGpu();
+#endif
 		return &_xG;
+	}
+
+	void MaxPoolLayer::Pull()
+	{
+		_maxIndex.PullFromGpu();
+		_xG.PullFromGpu();
+		_y.PullFromGpu();
 	}
 
 	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
@@ -664,6 +730,20 @@ namespace ff
 		}
 	}
 
+	void FcLayer::Pull()
+	{
+		_xG.PullFromGpu();
+		_w.PullFromGpu();
+		_wG.PullFromGpu();
+		_wG_m.PullFromGpu();
+		_wG_v.PullFromGpu();
+		_b.PullFromGpu();
+		_bG.PullFromGpu();
+		_bG_m.PullFromGpu();
+		_bG_v.PullFromGpu();
+		_y.PullFromGpu();
+	}
+
 	const CudaTensor* ReluLayer::Forward(const CudaTensor* x)
 	{
 		_pX = x;
@@ -678,7 +758,7 @@ namespace ff
 
 	const CudaTensor* ReluLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		assert(_xRelu._d0 == yG->_d0 && _xRelu._d1 == yG->_d1 && _xRelu._d2 == yG->_d2 && _xRelu._d3 == yG->_d3);
+		const_cast<CudaTensor*>(yG)->Reshape(_xRelu._d0, _xRelu._d1, _xRelu._d2, _xRelu._d3);
 		if (layerIndex > 0)
 		{
 			_xG.ResetTensor(_xRelu._d0, _xRelu._d1, _xRelu._d2, _xRelu._d3);
@@ -689,6 +769,12 @@ namespace ff
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_xG;
+	}
+
+	void ReluLayer::Pull()
+	{
+		_xRelu.PullFromGpu();
+		_xG.PullFromGpu();
 	}
 
 	const CudaTensor* DropoutLayer::Forward(const CudaTensor* x)
@@ -712,10 +798,7 @@ namespace ff
 
 	const CudaTensor* DropoutLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		if (1 != _crossCheck)
-		{
-			return yG;
-		}
+		if (1 != _crossCheck) return yG;
 		_crossCheck = 0;
 
 		assert(yG->_d0 == _dropoutMask._d0 && yG->_d1 == _dropoutMask._d1);
@@ -727,17 +810,19 @@ namespace ff
 		return yG;
 	}
 
+	void DropoutLayer::Pull()
+	{
+		_dropoutMask.PullFromGpu();
+	}
+
 	const CudaTensor* SoftmaxLayer::Forward(const CudaTensor* x)
 	{
 		_softmax.ResetTensor(x->_d0, x->_d1);
-		_lossG.ResetTensor(x->_d0, x->_d1);
 
 #if 1
 		int nBlocks = (x->_d1 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(nBlocks), threads(K_THREAD_PER_BLOCK);
-		ForwardSoftmax_Step1_Cuda <<< block, threads >>> (_lossG._dataGpu, x->_dataGpu, x->_d1, x->_d0);
-		assert(cudaGetLastError() == cudaSuccess);
-		ForwardSoftmax_Step2_Cuda <<< block, threads >>> (_softmax._dataGpu, _lossG._dataGpu, x->_dataGpu, x->_d1, x->_d0);
+		ForwardSoftmax_Cuda <<< block, threads >>> (_softmax._dataGpu, x->_dataGpu, x->_d1, x->_d0);
 		assert(cudaGetLastError() == cudaSuccess);
 #else
 		const_cast<CudaTensor*>(x)->PullFromGpu();
@@ -752,11 +837,10 @@ namespace ff
 					maxValue = currValue;
 				}
 			}
-
-			float sum = 0.0;
+			float sum = 0.0f;
 			for (int i = 0; i < x->_d0; ++i)
 			{
-				sum += exp(x->_data[i + x->_d0 * r] - maxValue); // stable softmax
+				sum += expf(x->_data[i + x->_d0 * r] - maxValue); // stable softmax
 			}
 			for (int i = 0; i < x->_d0; ++i)
 			{
@@ -770,13 +854,20 @@ namespace ff
 
 	const CudaTensor* SoftmaxLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		assert(yG->_d0 == _lossG._d1);
+		assert(yG->_d0 == _softmax._d1);
+		_lossG.ResetTensor(_softmax._d0, _softmax._d1);
 		int nJobs = _lossG._d1 * _lossG._d0;
 		int nBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(nBlocks), threads(K_THREAD_PER_BLOCK);
 		SoftmaxBackward_Cuda <<< block, threads >>> (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0, nJobs);
 		assert(cudaGetLastError() == cudaSuccess);
 		return &_lossG;
+	}
+
+	void SoftmaxLayer::Pull()
+	{
+		_softmax.PullFromGpu();
+		_lossG.PullFromGpu();
 	}
 
 	const CudaTensor* SumOfSquaresLayer::Forward(const CudaTensor* x)
@@ -795,6 +886,11 @@ namespace ff
 		ComputeSumOfSquresGradient << < block, threads >> > (_yG._dataGpu, _pY->_dataGpu, yLabel->_dataGpu, nJobs);
 		assert(cudaGetLastError() == cudaSuccess);
 		return &_yG;
+	}
+
+	void SumOfSquaresLayer::Pull()
+	{
+		_yG.PullFromGpu();
 	}
 
 	///////////////////////////////////////////////////////////////////////
@@ -893,12 +989,21 @@ namespace ff
 
 	void CudaNn::UpdateWs(float learningRate)
 	{
-		int numLayer = (int)_layers.size();
+		size_t numLayer = _layers.size();
 		for (int i = 0; i < numLayer; ++i)
 		{
 			_layers[i]->UpdateWs(learningRate, kBeta1, kBeta2, _beta1t, _beta2t);
 		}
 		_beta1t *= kBeta1;
 		_beta2t *= kBeta2;
+	}
+
+	void CudaNn::Pull()
+	{
+		size_t numLayer = _layers.size();
+		for (int i = 0; i < numLayer; ++i)
+		{
+			_layers[i]->Pull();
+		}
 	}
 } // namespace ff

@@ -1,6 +1,7 @@
 ﻿#include <stdio.h>
 #include <assert.h>
 #include <vector>
+#include <string>
 #include <algorithm>
 #include <math.h>
 #include <chrono>
@@ -24,117 +25,138 @@ public:
 
 void CheckAccuracy(const ff::CudaTensor* pSoftmax, const ff::CudaTensor& yLabel, int& top1, int& top3, int& top5);
 
-void LoadCifar10(int trainingBatchSize, std::vector<ff::CudaTensor>& trainingImages, std::vector<ff::CudaTensor>& trainingLabels,
-	ff::CudaTensor& testImages, ff::CudaTensor& testLabels)
+void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& filenames, std::vector<ff::CudaTensor>& images, std::vector<ff::CudaTensor>& labels)
 {
-	const int kTrainingDataSize = 50000;
-	const int kTestDataSize = 10000;
+	const int kFileBinarySize = 30730000;
+	const int kNumImagePerFile = 10000;
 	const int kNumBytesPerChannel = 1024; // 32 * 32
-	int numBatches = (kTrainingDataSize + trainingBatchSize - 1) / trainingBatchSize;
-	trainingImages.resize(numBatches);
-	trainingLabels.resize(numBatches);
-	int nLeft = kTrainingDataSize;
+	const int kNumChannel = 3;
+	int numFiles = (int)filenames.size();
+	int numTotalImages = numFiles * kNumImagePerFile;
+	if (numTotalImages > maxImages) numTotalImages = maxImages;
+	int numBatches = (numTotalImages + batchSize - 1) / batchSize;
+	images.resize(numBatches);
+	labels.resize(numBatches);
+	int nLeft = numTotalImages;
 	for (int i = 0; i < numBatches; ++i)
 	{
-		int currBatchSize = (trainingBatchSize < nLeft ? trainingBatchSize : nLeft);
-		trainingImages[i].ResetTensor(32, 32, 3, currBatchSize);
-		trainingLabels[i].ResetTensor(currBatchSize);
-		nLeft -= trainingBatchSize;
+		int currBatchSize = (batchSize < nLeft ? batchSize : nLeft);
+		images[i].ResetTensor(32, 32, 3, currBatchSize);
+		labels[i].ResetTensor(currBatchSize);
+		nLeft -= batchSize;
 	}
-	testImages.ResetTensor(32, 32, 3, kTestDataSize);
-	testLabels.ResetTensor(kTestDataSize);
-
-	int counter = 0;
-	const char* filenames[5] = {
-		"cifar-10/data_batch_1.bin",
-		"cifar-10/data_batch_2.bin", 
-		"cifar-10/data_batch_3.bin", 
-		"cifar-10/data_batch_4.bin",
-		"cifar-10/data_batch_5.bin" };
 
 	// Data normalization
 	float std[3] = { 63.0f, 62.1f, 66.7f };
 	float mean[3] = { 125.3f, 123.0f, 113.9f };
 
-	std::vector<unsigned char> raw(30730000);
-	for (int i = 0; i < 5; ++i)
+	int imageCounter = 0;
+	std::vector<unsigned char> raw(kFileBinarySize);
+	for (int i = 0; i < numFiles; ++i)
 	{
 		unsigned char* pCurr = &raw[0];
-		FILE* fp = fopen(filenames[i], "rb");
+		FILE* fp = fopen(filenames[i].c_str(), "rb");
 		assert(nullptr != fp);
-		fread(pCurr, 30730000, 1, fp);
+		fread(pCurr, kFileBinarySize, 1, fp);
 		fclose(fp);
-		for (int j = 0; j < 10000; ++j)
+		for (int j = 0; j < kNumImagePerFile; ++j)
 		{
-			int batchIndex = counter / trainingBatchSize;
-			int elementIndex = counter % trainingBatchSize;
-			++counter;
-			trainingLabels[batchIndex]._data[elementIndex] = static_cast<float>(*pCurr++);
+			int batchIndex = imageCounter / batchSize;
+			int elementIndex = imageCounter % batchSize;
+			labels[batchIndex]._data[elementIndex] = static_cast<float>(*pCurr++);
 			for (int c = 0; c < 3; ++c)
 			{
 				for (int k = 0; k < kNumBytesPerChannel; ++k)
 				{
 					float val = *pCurr++;
-					trainingImages[batchIndex]._data[elementIndex * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + k] = (val - mean[c]) / std[c];
+					images[batchIndex]._data[elementIndex * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + k] = (val - mean[c]) / std[c];
 				}
 			}
+			++imageCounter;
+			if (imageCounter >= numTotalImages)
+				break;
 		}
-	}
-	for (size_t i = 0; i < trainingImages.size(); ++i)
-	{
-		trainingImages[i].PushToGpu();
-		trainingLabels[i].PushToGpu();
+		if (imageCounter >= numTotalImages)
+			break;
 	}
 
-	FILE* fp = fopen("cifar-10/test_batch.bin", "rb");
-	assert(nullptr != fp);
-	unsigned char* pCurr = &raw[0];
-	fread(pCurr, 30730000, 1, fp);
-	fclose(fp);
-	for (int i = 0; i < 10000; ++i)
+	for (size_t i = 0; i < images.size(); ++i)
 	{
-		testLabels._data[i] = static_cast<float>(*pCurr++);
-		for (int c = 0; c < 3; ++c)
+		images[i].PushToGpu();
+		labels[i].PushToGpu();
+	}
+}
+
+int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector<ff::CudaTensor>& labels, int startIndex, int endIndex,
+	float& loss, int& top1, int& top3, int& top5)
+{
+	loss = 0.0f;
+	int imageCounter = 0;
+	ff::CudaTensor* pSoftmax = nullptr;
+	for (int i = startIndex; i < endIndex; ++i)
+	{
+		pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&images[i]));
+		pSoftmax->PullFromGpu();
+		imageCounter += pSoftmax->_d1;
+		assert(labels[i]._d0 == pSoftmax->_d1);
+		for (int j = 0; j < pSoftmax->_d1; ++j)
 		{
-			for (int j = 0; j < kNumBytesPerChannel; ++j)
+			if (pSoftmax->_data[static_cast<int>(labels[i]._data[j]) + pSoftmax->_d0 * j] <= 0.0f)
 			{
-				float val = *pCurr++;
-				testImages._data[i * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + j] = (val - mean[c]) / std[c];
+				printf("log(0)\n");
+			}
+			else
+			{
+				loss += -logf(pSoftmax->_data[static_cast<int>(labels[i]._data[j]) + pSoftmax->_d0 * j]);
 			}
 		}
+		int t1, t3, t5;
+		CheckAccuracy(pSoftmax, labels[i], t1, t3, t5);
+		top1 += t1; top3 += t3; top5 += t5;
 	}
-	testImages.PushToGpu();
-	testLabels.PushToGpu();
+	loss /= imageCounter;
+	return imageCounter;
 }
 
 int cifar10()
 {
 	const int kBatchSize = 100;
 
+	std::vector<std::string> trainingDataFilenames;
+	trainingDataFilenames.push_back("cifar-10/data_batch_1.bin");
+	trainingDataFilenames.push_back("cifar-10/data_batch_2.bin");
+	trainingDataFilenames.push_back("cifar-10/data_batch_3.bin");
+	trainingDataFilenames.push_back("cifar-10/data_batch_4.bin");
+	trainingDataFilenames.push_back("cifar-10/data_batch_5.bin");
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
-	ff::CudaTensor testImages;
-	ff::CudaTensor testLabels;
-	LoadCifar10(kBatchSize, trainingImages, trainingLabels, testImages, testLabels);
+	std::vector<std::string> testDataFilenames;
+	LoadCifar10(kBatchSize, 50000, trainingDataFilenames, trainingImages, trainingLabels);
+	testDataFilenames.push_back("cifar-10/test_batch.bin");
+	std::vector<ff::CudaTensor> testImages;
+	std::vector<ff::CudaTensor> testLabels;
+	LoadCifar10(kBatchSize, 10000, testDataFilenames, testImages, testLabels);
 
 	ff::CudaNn nn;
-	nn.InitializeCudaNn("");
-	nn.AddConv2d(3, 3, 16, 1, 1); // 32 * 32 * 16
+	nn.AddConv2d(3, 3, 64, 1, 1);		// 32 * 32 * 64
 	nn.AddRelu();
-	nn.AddMaxPool();
-	nn.AddConv2d(3, 16, 32, 1, 1); // 16 * 16 * 23 
+	nn.AddConv2d(3, 64, 64, 1, 1);		// 32 * 32 * 64
 	nn.AddRelu();
-	nn.AddMaxPool();
-	nn.AddConv2d(3, 32, 64, 1, 1); // 8 * 8 * 64
+	nn.AddMaxPool();					// 16 * 16 * 64
+	nn.AddConv2d(3, 64, 64, 1, 1);		// 16 * 16 * 64 
 	nn.AddRelu();
-	nn.AddFc(4096, 2048);
+	nn.AddConv2d(3, 64, 32, 1, 1);		// 16 * 16 * 32
+	nn.AddRelu();
+	nn.AddConv2d(3, 32, 32, 1, 1);		// 16 * 16 * 32
+	nn.AddRelu();
+	nn.AddMaxPool();					// 8 * 8 * 32
+	nn.AddFc(2048, 2048);
 	nn.AddRelu();
 	nn.AddFc(2048, 1024);
 	nn.AddRelu();
 	nn.AddFc(1024, 10);
 	nn.AddSoftmax();
 
-	float loss = 0.0f;
 	float last_validation_loss = 1e8f;
 	float lowest_validation_loss = 1e8f;
 	float last_test_loss = 1e8f;
@@ -142,12 +164,10 @@ int cifar10()
 	const size_t numBatch = trainingImages.size();
 	int currValidationDataIndex = 0;
 	int numValidationData = static_cast<int>(numBatch) / 5;
-	int top1 = 0, top3 = 0, top5 = 0;
-	ff::CudaTensor* pSoftmax = nullptr;
 
 	char buffer[2048];
 	const int numEpoch = 10000;
-	float learningRate = 0.0001f;
+	float learningRate = 0.001f;
 	printf("* Initial learning rate(%f)\n", learningRate);
 	for (int i = 0; i < numEpoch; ++i)
 	{
@@ -169,25 +189,14 @@ int cifar10()
 			}
 		}
 
+		nn.Pull();
+
 		// Validation loss
 		{
-			loss = 0.0f;
-			top1 = top3 = top5 = 0;
-			int cntVal = 0;
-			for (int j = currValidationDataIndex; j < currValidationDataIndex + numValidationData; ++j)
-			{
-				cntVal += trainingImages[j]._d3;
-				pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&trainingImages[j]));
-				pSoftmax->PullFromGpu();
-				for (int k = 0; k < trainingImages[j]._d3; ++k)
-				{
-					loss += -logf(pSoftmax->_data[static_cast<int>(trainingLabels[j]._data[k]) + pSoftmax->_d0 * k]);
-				}
-				int t1, t3, t5;
-				CheckAccuracy(pSoftmax, trainingLabels[j], t1, t3, t5);
-				top1 += t1; top3 += t3; top5 += t5;
-			}
-			loss /= cntVal;
+			int top1 = 0, top3 = 0, top5 = 0;
+			float loss = 0.0f;
+			int testCounter = ComputeLoss(nn, trainingImages, trainingLabels, currValidationDataIndex, currValidationDataIndex + numValidationData,
+				loss, top1, top3, top5);
 			if (0 == i) last_validation_loss = loss;
 			if (loss < lowest_validation_loss)
 			{
@@ -199,9 +208,9 @@ int cifar10()
 				//learningRate *= 0.5f;
 				//printf("- Learning rate decreased(%f)\n", learningRate);
 			}
-			learningRate *= 0.8f;
+			learningRate *= 0.65f;
 			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
-				cntVal,
+				testCounter,
 				loss, loss - last_validation_loss, lowest_validation_loss,
 				top1,
 				top3,
@@ -218,23 +227,16 @@ int cifar10()
 
 		// Test loss
 		{
-			pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&testImages));
-			pSoftmax->PullFromGpu();
-
-			loss = 0.0f;
-			for (int j = 0; j < testImages._d3; ++j)
-			{
-				loss += -logf(pSoftmax->_data[static_cast<int>(testLabels._data[j]) + pSoftmax->_d0 * j]);
-			}
-			loss /= testImages._d3;
+			int top1 = 0, top3 = 0, top5 = 0;
+			float loss = 0.0f;
+			int testCounter = ComputeLoss(nn, testImages, testLabels, 0, (int)testImages.size(), loss, top1, top3, top5);
 			if (0 == i) last_test_loss = loss;
 			if (loss < lowest_test_loss)
 			{
 				lowest_test_loss = loss;
 			}
-			CheckAccuracy(pSoftmax, testLabels, top1, top3, top5);
 			printf("Test[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
-				pSoftmax->_d1,
+				testCounter,
 				loss, loss - last_test_loss, lowest_test_loss,
 				top1,
 				top3,

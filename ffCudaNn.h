@@ -52,15 +52,13 @@ namespace ff
 
 		virtual ~CudaLayer() {}
 
-		//// x2 is for back-propagation.
-		//// x2 is nullptr at the first-layer and usually the same as x, except ReluLayer.
-		//virtual const CudaTensor* Forward(const CudaTensor* x, const CudaTensor* x2 = nullptr) = 0;
-
 		virtual const CudaTensor* Forward(const CudaTensor*) = 0;
 
 		virtual const CudaTensor* Backward(const CudaTensor*, const int layerIndex) = 0;
 
 		virtual void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) {}
+
+		virtual void Pull() {}
 
 	public:
 		CudaNn* _nn;
@@ -76,6 +74,8 @@ namespace ff
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
 		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
+
+		void Pull() override;
 
 	public:
 		int _kernelSize, _stride, _padding;
@@ -97,6 +97,8 @@ namespace ff
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
+		void Pull() override;
+
 	public:
 		const CudaTensor* _pX;
 		CudaTensor _maxIndex;
@@ -114,6 +116,8 @@ namespace ff
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
 		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
+
+		void Pull() override;
 
 	public:
 		const CudaTensor* _pX;
@@ -138,6 +142,8 @@ namespace ff
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
+		void Pull() override;
+
 	public:
 		const CudaTensor* _pX;
 		CudaTensor _xRelu;
@@ -152,6 +158,8 @@ namespace ff
 		const CudaTensor* Forward(const CudaTensor*) override;
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+		void Pull() override;
 
 	public:
 		int	_crossCheck;
@@ -168,6 +176,8 @@ namespace ff
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
 
+		void Pull() override;
+
 	public:
 		CudaTensor _softmax;
 		CudaTensor _lossG;
@@ -181,6 +191,8 @@ namespace ff
 		const CudaTensor* Forward(const CudaTensor*) override;
 
 		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+		void Pull() override;
 
 	public:
 		const CudaTensor* _pY;
@@ -217,6 +229,8 @@ namespace ff
 		void UpdateWs(float learningRate);
 
 		bool IsDropoutEnabled() { return _dropoutEnabled; }
+
+		void Pull();
 
 	public:
 		std::vector<CudaLayer*> _layers;

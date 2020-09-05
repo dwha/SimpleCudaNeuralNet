@@ -123,10 +123,10 @@ int mnist()
 	std::vector<ff::CudaTensor> testImages;
 	std::vector<ff::CudaTensor> testLabels;
 	LoadMnistData("mnist/train-images.idx3-ubyte", "mnist/train-labels.idx1-ubyte", kBatchSize, trainingImages, trainingLabels);
-	LoadMnistData("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", 10000, testImages, testLabels);
+	LoadMnistData("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", kBatchSize, testImages, testLabels);
 
+#if 1
 	ff::CudaNn nn;
-	nn.InitializeCudaNn("");
 	nn.AddFc(28 * 28, 1000);
 	nn.AddDropout(0.5);
 	nn.AddRelu();
@@ -135,11 +135,37 @@ int mnist()
 	nn.AddRelu();
 	nn.AddFc(1000, 10);
 	nn.AddSoftmax();
+#else
+	for (size_t i = 0; i < trainingImages.size(); ++i)
+	{
+		trainingImages[i].Reshape(28, 28, 1, trainingImages[i]._dataSize / (28 * 28));
+	}
+	for (size_t i = 0; i < testImages.size(); ++i)
+	{
+		testImages[i].Reshape(28, 28, 1, testImages[i]._dataSize / (28 * 28));
+	}
+	ff::CudaNn nn;
+	nn.AddConv2d(3, 1, 64, 1, 1);			// 28 * 28 * 64
+	nn.AddRelu();
+	nn.AddConv2d(3, 64, 64, 1, 1);			// 28 * 28 * 64 
+	nn.AddRelu();
+	nn.AddMaxPool();						// 14 * 14 * 32 
+	nn.AddConv2d(3, 64, 32, 1, 1);
+	nn.AddRelu();
+	nn.AddMaxPool();						// 7 * 7 * 32 
+	nn.AddConv2d(3, 32, 16, 1, 1);			// 7 * 7 * 16
+	nn.AddRelu();
+	nn.AddFc(784, 1024);
+	nn.AddRelu();
+	nn.AddFc(1024, 10);
+	nn.AddSoftmax();
+
+#endif
 
 	const int numEpoch = 1000;
 	const size_t numBatch = trainingImages.size();
 
-	float learningRate = 0.001f;
+	float learningRate = 0.00001f;
 	float lowest_loss = 1e8f;
 	for (int i = 0; i < numEpoch; ++i)
 	{
@@ -150,16 +176,28 @@ int mnist()
 			nn.UpdateWs(learningRate);
 		}
 
-		ff::CudaTensor* softmax = const_cast<ff::CudaTensor*>(nn.Forward(&testImages[0]));
-		softmax->PullFromGpu();
-
+		// Test
 		float loss = 0.0;
-		for (int j = 0; j < testImages[0]._d1; ++j)
+		int numTestImages = 0;
+		int top1 = 0, top3 = 0, top5 = 0;
+		for (size_t j = 0; j < testImages.size(); ++j)
 		{
-			loss += -logf(softmax->_data[static_cast<int>(testLabels[0]._data[j]) + softmax->_d0 * j]);
-		}
-		loss /= testImages[0]._d1;
+			ff::CudaTensor* softmax = const_cast<ff::CudaTensor*>(nn.Forward(&testImages[j]));
+			softmax->PullFromGpu();
 
+			for (int k = 0; k < softmax->_d1; ++k)
+			{
+				++numTestImages;
+				loss += -logf(softmax->_data[static_cast<int>(testLabels[j]._data[k]) + softmax->_d0 * k]);
+			}
+
+			int t1, t3, t5;
+			CheckAccuracy(softmax, testLabels[j], t1, t3, t5);
+			top1 += t1;
+			top3 += t3;
+			top5 += t5;
+		}
+		loss /= numTestImages;
 		if (loss < lowest_loss)
 		{
 			lowest_loss = loss;
@@ -170,9 +208,7 @@ int mnist()
 			learningRate *= 0.4f;
 		}
 
-		int top1 = 0, top3 = 0, top5 = 0;
-		CheckAccuracy(softmax, testLabels[0], top1, top3, top5);
-		printf("Epoch[%03d] Test[%d](Loss: %f/%f, Top1: %d, Top3: %d, Top5: %d)\n", i+1, softmax->_d1, loss, lowest_loss,
+		printf("Epoch[%03d] Test[%d](Loss: %f/%f, Top1: %d, Top3: %d, Top5: %d)\n", i+1, numTestImages, loss, lowest_loss,
 			top1,
 			top3,
 			top5);
