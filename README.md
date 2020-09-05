@@ -12,7 +12,7 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 * Relu
 
 #### Regularisation
-* Max pooling (WIP)
+* Max pooling
 * Dropout
 	
 #### Loss
