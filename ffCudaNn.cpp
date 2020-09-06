@@ -119,7 +119,7 @@ namespace ff
 		y[c + r * ww] = v + b[c];
 	}
 
-	__global__ void ComputeWg_Cuda(float* wG, const float* x, const float* yG, int nXcol, int nXrow, int nWcol, int nJobs)
+	__global__ void BackwardFc_Wg_Cuda(float* wG, const float* x, const float* yG, int nXcol, int nXrow, int nWcol, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -132,10 +132,10 @@ namespace ff
 		{
 			v += x[r + i * nXcol] * yG[c + i * nWcol];
 		}
-		wG[c + r * nWcol] = v;
+		wG[c + r * nWcol] = v / nXrow;
 	}
 
-	__global__ void ComputeXg_Cuda(float* xG, const float* yG, const float* w, int yGw, int wTh, int xGw, int nJobs)
+	__global__ void BackwardFc_Xg_Cuda(float* xG, const float* yG, const float* w, int yGw, int wTh, int xGw, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -150,10 +150,9 @@ namespace ff
 		{
 			v += yG[i + yGbaseIndex] * w[i + wBaseIndex];
 		}
-		xG[c + r * xGw] = v;
 	}
 
-	__global__ void ComputeBg_Cuda(float* bG, const float* yG, int nYgCol, int nYgRow)
+	__global__ void BackwardFc_Bg_Cuda(float* bG, const float* yG, int nYgCol, int nYgRow)
 	{
 		int c = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (c >= nYgCol) return;
@@ -163,9 +162,10 @@ namespace ff
 		{
 			bG[c] += yG[c + i * nYgRow];
 		}
+		bG[c] /= nYgRow;
 	}
 
-	__global__ void ComputeSumOfSquresGradient(float* yG, const float* y, const float* yLabel, int nJobs)
+	__global__ void BackwardSumOfSqures(float* yG, const float* y, const float* yLabel, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
@@ -191,7 +191,7 @@ namespace ff
 		w[index] -= (learningRate * unbiased_m / (sqrtf(unbiased_v) + 1e-8f));
 	}
 
-	__global__ void Relu_Cuda(float* relu_x, const float* x, int nJobs)
+	__global__ void ForwardRelu_Cuda(float* relu_x, const float* x, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -199,7 +199,7 @@ namespace ff
 		relu_x[jobIndex] = fmaxf(x[jobIndex], 0.0);
 	}
 
-	__global__ void ReluG_Cuda(float* xG, const float* yG, const float* x, int nJobs)
+	__global__ void BackwardRelu_Cuda(float* xG, const float* yG, const float* x, int nJobs)
 	{
 		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (jobIndex >= nJobs) return;
@@ -229,7 +229,7 @@ namespace ff
 		}
 	}
 
-	__global__ void SoftmaxBackward_Cuda(float* lossG, const float* softmax, const float* yLabel, int nCol, int nJobs)
+	__global__ void BackwardSoftmax_Cuda(float* lossG, const float* softmax, const float* yLabel, int nCol, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
@@ -284,7 +284,7 @@ namespace ff
 		y[yIndex] += b[outChannel];
 	}
 
-	__global__ void BackwardConv2d_wG_Cuda(float* wG, const float* x, const float* yG,
+	__global__ void BackwardConv2d_Wg_Cuda(float* wG, const float* x, const float* yG,
 		int nOutChannel, int nInChannel,
 		int nImages, int nRowY, int nColY, int nRowX, int nColX, int kernelSize, int stride, int padding, int nJobs)
 	{
@@ -316,9 +316,10 @@ namespace ff
 				}
 			}
 		}
+		wG[wIndex] /= nImages;
 	}
 
-	__global__ void BackwardConv2d_xG_Cuda(float* xG, const float* w, const float* yG,
+	__global__ void BackwardConv2d_Xg_Cuda(float* xG, const float* w, const float* yG,
 		int nImages, int nInChannel, int nRowX, int nColX, 
 		int nOutChannel, int nRowY, int nColY,
 		int kernelSize, int stride, int padding, int nJobs)
@@ -358,7 +359,7 @@ namespace ff
 		}
 	}
 
-	__global__ void BackwardConv2d_bG_Cuda(float* bG, const float* yG, int nImages, int nOutChannel, int nRowY, int nColY)
+	__global__ void BackwardConv2d_Bg_Cuda(float* bG, const float* yG, int nImages, int nOutChannel, int nRowY, int nColY)
 	{
 		int outChannel = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (outChannel >= nOutChannel) return;
@@ -375,6 +376,7 @@ namespace ff
 				}
 			}
 		}
+		bG[outChannel] /= nImages;
 	}
 
 	__global__ void ForwardMaxPool_Cuda(float* y, float* maxIndex, const float* x, int nImages, int nOutChannel, int nRow, int nCol)
@@ -530,7 +532,7 @@ namespace ff
 			int nJobs = _wG._d3 * _wG._d2 * _wG._d1 * _wG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_wG_Cuda << <blocks, threads >> > (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu,
+			BackwardConv2d_Wg_Cuda << <blocks, threads >> > (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu,
 				_wG._d3, _wG._d2,
 				yG->_d3, yG->_d1, yG->_d0, _pX->_d1, _pX->_d0,
 				_kernelSize, _stride, _padding, nJobs);
@@ -541,7 +543,7 @@ namespace ff
 			int nJobs = _bG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_bG_Cuda <<< blocks, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d3, yG->_d2, yG->_d1, yG->_d0);
+			BackwardConv2d_Bg_Cuda <<< blocks, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d3, yG->_d2, yG->_d1, yG->_d0);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		if (layerIndex > 0)
@@ -549,7 +551,7 @@ namespace ff
 			int nJobs = _xG._d3 * _xG._d2 * _xG._d1 * _xG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_xG_Cuda << <blocks, threads >> > (_xG._dataGpu, _w._dataGpu, yG->_dataGpu,
+			BackwardConv2d_Xg_Cuda << <blocks, threads >> > (_xG._dataGpu, _w._dataGpu, yG->_dataGpu,
 				_xG._d3, _xG._d2, _xG._d1, _xG._d0,
 				yG->_d2, yG->_d1, yG->_d0,
 				_kernelSize, _stride, _padding, nJobs);
@@ -826,13 +828,13 @@ namespace ff
 			int nJobs = _wG._d1 * _wG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ComputeWg_Cuda <<< block, threads >>> (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, _pX->_d0, _pX->_d1, _wG._d0, nJobs);
+			BackwardFc_Wg_Cuda <<< block, threads >>> (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, _pX->_d0, _pX->_d1, _wG._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		{
 			int numBlocks = (_b._d0 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ComputeBg_Cuda <<< block, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d0, yG->_d1);
+			BackwardFc_Bg_Cuda <<< block, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d0, yG->_d1);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 
@@ -844,7 +846,7 @@ namespace ff
 			int nJobs = _xG._d1 * _xG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ComputeXg_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
+			BackwardFc_Xg_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_xG;
@@ -1001,7 +1003,7 @@ namespace ff
 			int nJobs = _lossG._d1 * _lossG._d0;
 			int nBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(nBlocks), threads(K_THREAD_PER_BLOCK);
-			SoftmaxBackward_Cuda << < block, threads >> > (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0, nJobs);
+			BackwardSoftmax_Cuda << < block, threads >> > (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_lossG;
@@ -1028,7 +1030,7 @@ namespace ff
 			int nJobs = _yG._d1 * _yG._d0;
 			int nBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(nBlocks), threads(K_THREAD_PER_BLOCK);
-			ComputeSumOfSquresGradient << < block, threads >> > (_yG._dataGpu, _pY->_dataGpu, yLabel->_dataGpu, nJobs);
+			BackwardSumOfSqures <<< block, threads >>> (_yG._dataGpu, _pY->_dataGpu, yLabel->_dataGpu, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_yG;

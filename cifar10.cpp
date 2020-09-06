@@ -7,14 +7,14 @@
 #include <chrono>
 #include "ffCudaNn.h"
 
-class MeasureTime
+class ProfileScope
 {
 public:
-	MeasureTime(const char* msg) : _msg(msg)
+	ProfileScope(const char* msg) : _msg(msg)
 	{
 		_s = std::chrono::high_resolution_clock::now();
 	}
-	~MeasureTime()
+	~ProfileScope()
 	{
 		std::chrono::duration<float> delta = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - _s);
 		printf("%s [%fs]\n", _msg, delta.count());
@@ -87,8 +87,8 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 	}
 }
 
-int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector<ff::CudaTensor>& labels, int startIndex, int endIndex,
-	float& loss, int& top1, int& top3, int& top5)
+int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector<ff::CudaTensor>& labels,
+	int startIndex, int endIndex, float& loss, int& top1, int& top3, int& top5)
 {
 	loss = 0.0f;
 	int imageCounter = 0;
@@ -160,32 +160,36 @@ int cifar10()
 	int currValidationDataIndex = 0;
 	int numValidationData = static_cast<int>(numBatch) / 5;
 
-	char buffer[2048];
-	const int numEpoch = 10000;
-	float learningRate = 0.000001f;
+	float learningRate = 0.0001f;
 	printf("* Initial learning rate(%f)\n", learningRate);
+
+	char buffer[2048];
+	const int numEpoch = 100000;
 	for (int i = 0; i < numEpoch; ++i)
 	{
 		sprintf(buffer, "-- Epoch %03d", i + 1);
-		MeasureTime __m(buffer);
+		ProfileScope __m(buffer);
 
+		//unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+		//std::shuffle(trainingImages.begin(), trainingImages.end(), std::default_random_engine(seed));
+		//std::shuffle(trainingLabels.begin(), trainingLabels.end(), std::default_random_engine(seed));
 		// Training
+		for (size_t j = 0; j < numBatch; ++j)
 		{
-			for (size_t j = 0; j < numBatch; ++j)
-			{
-				if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
-				{
-					continue; // Exclude validation data from training set
-				}
+			//if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
+			//{
+			//	continue; // Exclude validation data from training set
+			//}
 
-				nn.Forward(&trainingImages[j], true);
-				nn.Backward(&trainingLabels[j]);
-				nn.UpdateWs(learningRate);
-				//nn.Pull();
-			}
+			nn.Forward(&trainingImages[j], true);
+			nn.Backward(&trainingLabels[j]);
+			nn.UpdateWs(learningRate);
+			//nn.Pull();
 		}
 
 		// Validation loss
+		learningRate *= 0.995f; // learning rate decay
+		if (1)
 		{
 			int top1 = 0, top3 = 0, top5 = 0;
 			float loss = 0.0f;

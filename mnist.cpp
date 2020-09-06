@@ -160,10 +160,10 @@ int mnist()
 	nn.AddSoftmax();
 #endif
 
-	const int numEpoch = 1000;
-	const size_t numBatch = trainingImages.size();
 	float lowest_loss = 1e8f;
+	const size_t numBatch = trainingImages.size();
 
+	const int numEpoch = 10000;
 	float learningRate = 0.0001f;
 	for (int i = 0; i < numEpoch; ++i)
 	{
@@ -202,10 +202,10 @@ int mnist()
 		{
 			lowest_loss = loss;
 		}
-		//else
+		else
 		{
 			// Learning rate decay
-			learningRate *= 0.8f;
+			//learningRate *= 0.8f;
 		}
 
 		printf("Epoch[%03d] Test[%d](Loss: %f/%f, Top1: %d, Top3: %d, Top5: %d)\n", i+1, numTestImages, loss, lowest_loss,
