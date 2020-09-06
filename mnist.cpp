@@ -116,7 +116,7 @@ void CheckAccuracy(const ff::CudaTensor* pSoftmax, const ff::CudaTensor& yLabel,
 
 int mnist()
 {
-	const int kBatchSize = 100;
+	const int kBatchSize = 50;
 
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
@@ -125,14 +125,11 @@ int mnist()
 	LoadMnistData("mnist/train-images.idx3-ubyte", "mnist/train-labels.idx1-ubyte", kBatchSize, trainingImages, trainingLabels);
 	LoadMnistData("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", kBatchSize, testImages, testLabels);
 
-#if 0
+#if 1
 	ff::CudaNn nn;
 	nn.AddFc(28 * 28, 1024);
 	nn.AddRelu();
-	nn.AddFc(1024, 2048);
-	nn.AddDropout(0.5);
-	nn.AddRelu();
-	nn.AddFc(2048, 10);
+	nn.AddFc(1024, 10);
 	nn.AddSoftmax();
 #else
 	for (size_t i = 0; i < trainingImages.size(); ++i)
@@ -143,29 +140,29 @@ int mnist()
 	{
 		testImages[i].Reshape(28, 28, 1, testImages[i]._dataSize / (28 * 28));
 	}
-	ff::CudaNn nn; // total parameters: 873,536
-	nn.AddConv2d(3, 1, 64, 1, 1);			// 28 * 28 * 64
-	nn.AddRelu();
-	nn.AddConv2d(3, 64, 64, 1, 1);			// 28 * 28 * 64 
+	ff::CudaNn nn;
+	nn.AddConv2d(3, 1, 4, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();						
-	nn.AddConv2d(3, 64, 32, 1, 1);			// 14 * 14 * 32	
+	nn.AddConv2d(3, 4, 16, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();						
-	nn.AddConv2d(3, 32, 16, 1, 1);			// 7 * 7 * 16
+	nn.AddConv2d(3, 16, 64, 1, 1);
 	nn.AddRelu();
-	nn.AddFc(784, 1024);
+	nn.AddFc(49 * 64, 4096);
 	nn.AddRelu();
-	nn.AddFc(1024, 10);
+	nn.AddFc(4096, 10);
 	nn.AddSoftmax();
 #endif
 
+	float learningRate = 0.001f;
+	printf("* Initial learning rate(%f)\n", learningRate);
+
 	float lowest_loss = 1e8f;
+	float last_loss = 1e8f;
 	const size_t numBatch = trainingImages.size();
 
-	const int numEpoch = 10000;
-	float learningRate = 0.0001f;
-	for (int i = 0; i < numEpoch; ++i)
+	for (int i = 0; i < 10000; ++i)
 	{
 		for (size_t j = 0; j < numBatch; ++j)
 		{
@@ -185,10 +182,13 @@ int mnist()
 
 			for (int k = 0; k < softmax->_d1; ++k)
 			{
-				++numTestImages;
 				float val = softmax->_data[static_cast<int>(testLabels[j]._data[k]) + softmax->_d0 * k];
 				assert(val > 0.0f);
-				loss += -logf(val);
+				if (val > 0.0f)
+				{
+					loss += -logf(val);
+					++numTestImages;
+				}
 			}
 
 			int t1, t3, t5;
@@ -197,16 +197,19 @@ int mnist()
 			top3 += t3;
 			top5 += t5;
 		}
+		if (0 == i) last_loss = loss;
 		loss /= numTestImages;
 		if (loss < lowest_loss)
 		{
 			lowest_loss = loss;
 		}
-		else
+		if (loss > last_loss)
 		{
 			// Learning rate decay
 			//learningRate *= 0.8f;
+			learningRate *= 0.6f;
 		}
+		last_loss = loss;
 
 		printf("Epoch[%03d] Test[%d](Loss: %f/%f, Top1: %d, Top3: %d, Top5: %d)\n", i+1, numTestImages, loss, lowest_loss,
 			top1,

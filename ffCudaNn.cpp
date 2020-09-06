@@ -83,7 +83,7 @@ namespace ff
 		float s = 1.0f / (1.0f - zeroRatio);
 		for (int i = 0; i < _dataSize; ++i)
 		{
-			_data[i] = 0.0;
+			_data[i] = 0.0f;
 			if (g_uniformDistribution(g_generator) > zeroRatio)
 				_data[i] = s;
 		}
@@ -102,67 +102,224 @@ namespace ff
 		assert(err == cudaSuccess);
 	}
 
-	///////////////////////////////////////////////////////////////////////
-	__global__ void LinearTransform_Cuda(float* y, const float* x, const float* w, const float* b, int xw, int ww, int nJobs)
+	void CudaTensor::WriteOut(int nCol, int nRow, const char* filename)
 	{
-		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (jobIndex >= nJobs) return;
-		int r = jobIndex / ww;
-		int c = jobIndex % ww;
+		PullFromGpu();
+		assert(nCol * nRow * 3 <= _dataSize);
+		FILE* fp = fopen(filename, "wt");
+		assert(fp != nullptr);
+		fprintf(fp, "P3\n%d %d\n255\n", nCol, nRow);
+		for (int i = 0; i < nRow; ++i)
+		{
+			for (int j = 0; j < nCol; ++j)
+			{
+				for (int c = 0; c < 3; ++c)
+				{
+					float v = _data[c * nCol * nRow + i * nRow + j];
+					fprintf(fp, "%d ", (int)(v * 255.0f));
+				}
+			}
+			fprintf(fp, "\n");
+		}
+		fclose(fp);
+	}
+
+	///////////////////////////////////////////////////////////////////////
+	__global__ void LinearTransform_Cuda(float* y, const float* x, const float* w, const float* b, int nColX, int nColW, int nJobs)
+	{
+		const int yIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (yIndex >= nJobs) return;
+		int rowX = yIndex / nColW;
+		int colW = yIndex % nColW;
 
 		float v = 0.0f;
-		int xBaseIndex = r * xw;
-		for (int i = 0; i < xw; ++i)
+		int xBaseIndex = rowX * nColX;
+		for (int i = 0; i < nColX; ++i)
 		{
-			v += x[i + xBaseIndex] * w[c + i * ww];
+			v += x[i + xBaseIndex] * w[colW + i * nColW];
 		}
-		y[c + r * ww] = v + b[c];
+		y[yIndex] = v + b[colW];
 	}
 
 	__global__ void BackwardFc_Wg_Cuda(float* wG, const float* x, const float* yG, int nXcol, int nXrow, int nWcol, int nJobs)
 	{
-		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (jobIndex >= nJobs) return;
-		int r = jobIndex / nWcol;
-		int c = jobIndex % nWcol;
+		const int wGindex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (wGindex >= nJobs) return;
+		int r = wGindex / nWcol;
+		int c = wGindex % nWcol;
 
 		// wG = x.T * yG
-		float v = 0.0f;
+		wG[wGindex] = 0.0f;
 		for (int i = 0; i < nXrow; ++i)
 		{
-			v += x[r + i * nXcol] * yG[c + i * nWcol];
+			wG[wGindex] += x[r + i * nXcol] * yG[c + i * nWcol];
 		}
-		wG[c + r * nWcol] = v / nXrow;
-	}
-
-	__global__ void BackwardFc_Xg_Cuda(float* xG, const float* yG, const float* w, int yGw, int wTh, int xGw, int nJobs)
-	{
-		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (jobIndex >= nJobs) return;
-		int r = jobIndex / xGw;
-		int c = jobIndex % xGw;
-
-		// xG = yG * w.T
-		float v = 0.0f;
-		int yGbaseIndex = r * yGw;
-		int wBaseIndex = c * wTh;
-		for (int i = 0; i < yGw; ++i)
-		{
-			v += yG[i + yGbaseIndex] * w[i + wBaseIndex];
-		}
+		wG[wGindex] /= nXrow;
 	}
 
 	__global__ void BackwardFc_Bg_Cuda(float* bG, const float* yG, int nYgCol, int nYgRow)
 	{
-		int c = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		const int c = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (c >= nYgCol) return;
 
 		bG[c] = 0.0;
 		for (int i = 0; i < nYgRow; ++i)
 		{
-			bG[c] += yG[c + i * nYgRow];
+			bG[c] += yG[c + i * nYgCol];
 		}
 		bG[c] /= nYgRow;
+	}
+
+	__global__ void BackwardFc_Xg_Cuda(float* xG, const float* yG, const float* w, int yGw, int wTh, int xGw, int nJobs)
+	{
+		const int xGindex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (xGindex >= nJobs) return;
+		int r = xGindex / xGw;
+		int c = xGindex % xGw;
+
+		// xG = yG * w.T
+		xG[xGindex] = 0.0f;
+		int yGbaseIndex = r * yGw;
+		int wBaseIndex = c * wTh;
+		for (int i = 0; i < yGw; ++i)
+		{
+			xG[xGindex] += yG[i + yGbaseIndex] * w[i + wBaseIndex];
+		}
+	}
+
+	__global__ void ForwardConv2d_Cuda(
+		float* y, const float* x, const float* w, const float* b,
+		int nOutChannel, int nRowY, int nColY,
+		int nInChannel, int nRowX, int nColX,
+		int kernelSize, int stride, int padding, int nJobs)
+	{
+		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (index >= nJobs) return;
+
+		const int yIndex = index;
+		int image = index / (nOutChannel * nRowY * nColY);
+		index -= image * (nOutChannel * nRowY * nColY);
+		int outChannel = index / (nRowY * nColY);
+		index -= outChannel * (nRowY * nColY);
+		int rowY = index / nColY;
+		int colY = index % nColY;
+
+		y[yIndex] = 0.0f;
+		int startRowX = rowY * stride - padding;
+		int startColX = colY * stride - padding;
+		for (int inChannel = 0; inChannel < nInChannel; ++inChannel)
+		{
+			for (int rowX = startRowX; rowX < startRowX + kernelSize; ++rowX)
+			{
+				if (rowX < 0 || rowX >= nRowX) continue;
+				int xBaseIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX;
+				int wBaseIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + (rowX - startRowX) * kernelSize;
+				for (int colX = startColX; colX < startColX + kernelSize; ++colX)
+				{
+					if (colX < 0 || colX >= nColX) continue;
+					y[yIndex] += x[xBaseIndex + colX] * w[wBaseIndex + (colX - startColX)];
+				}
+			}
+		}
+		y[yIndex] += b[outChannel];
+	}
+
+	__global__ void BackwardConv2d_Wg_Cuda(
+		float* wG, const float* x, const float* yG,
+		int nOutChannel, int nInChannel,
+		int nImages, int nRowY, int nColY, int nRowX, int nColX,
+		int kernelSize, int stride, int padding, int nJobs)
+	{
+		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (index >= nJobs) return;
+
+		const int wIndex = index;
+		int outChannel = index / (nInChannel * kernelSize * kernelSize);
+		index -= outChannel * (nInChannel * kernelSize * kernelSize);
+		int inChannel = index / (kernelSize * kernelSize);
+		index -= inChannel * (kernelSize * kernelSize);
+		int rowW = index / kernelSize;
+		int colW = index % kernelSize;
+
+		wG[wIndex] = 0.0f;
+		for (int image = 0; image < nImages; ++image)
+		{
+			for (int rowY = 0; rowY < nRowY; ++rowY)
+			{
+				for (int colY = 0; colY < nColY; ++colY)
+				{
+					int rowX = rowY * stride - padding + rowW;
+					if (rowX < 0 || rowX >= nRowX) continue;
+					int colX = colY * stride - padding + colW;
+					if (colX < 0 || colX >= nColX) continue;
+					int yIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY + colY;
+					int xIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX + colX;
+					wG[wIndex] += x[xIndex] * yG[yIndex];
+				}
+			}
+		}
+		wG[wIndex] /= nImages;
+	}
+
+	__global__ void BackwardConv2d_Bg_Cuda(float* bG, const float* yG, int nImages, int nOutChannel, int nRowY, int nColY)
+	{
+		const int outChannel = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (outChannel >= nOutChannel) return;
+
+		bG[outChannel] = 0.0f;
+		for (int image = 0; image < nImages; ++image)
+		{
+			for (int rowY = 0; rowY < nRowY; ++rowY)
+			{
+				int yBaseIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY;
+				for (int colY = 0; colY < nColY; ++colY)
+				{
+					bG[outChannel] += yG[yBaseIndex + colY];
+				}
+			}
+		}
+		bG[outChannel] /= nImages;
+	}
+
+	__global__ void BackwardConv2d_Xg_Cuda(
+		float* xG, const float* w, const float* yG,
+		int nImages, int nInChannel, int nRowX, int nColX, 
+		int nOutChannel, int nRowY, int nColY,
+		int kernelSize, int stride, int padding, int nJobs)
+	{
+		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		if (index >= nJobs) return;
+
+		int xIndex = index;
+		int image = index / (nInChannel * nRowX * nColX);
+		index -= image * (nInChannel * nRowX * nColX);
+		int inChannel = index / (nRowX * nColX);
+		index -= inChannel * (nRowX * nColX);
+		int rowX = index / nColX;
+		int colX = index % nColX;
+
+		xG[xIndex] = 0.0f;
+		// Note(dongwook): Iterate all y's which use the current x
+		for (int rowY = 0; rowY < nRowY; ++rowY)
+		{
+			int upperX = rowY * stride - padding;
+			if (rowX < upperX) continue;
+			if (upperX + kernelSize <= rowX) break;
+			int rowW = rowX - upperX;
+			for (int colY = 0; colY < nColY; ++colY)
+			{
+				int leftX = colY * stride - padding;
+				if (colX < leftX) continue;
+				if (leftX + kernelSize <= colX) break;
+				int colW = colX - leftX;
+				for (int outChannel = 0; outChannel < nOutChannel; ++outChannel)
+				{
+					int yIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY + colY;
+					int wIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + rowW * kernelSize + colW;
+					xG[xIndex] += w[wIndex] * yG[yIndex];
+				}
+			}
+		}
 	}
 
 	__global__ void BackwardSumOfSqures(float* yG, const float* y, const float* yLabel, int nJobs)
@@ -248,152 +405,21 @@ namespace ff
 		x[index] *= dropoutMask[index];
 	}
 
-	__global__ void ForwardConv2d_Cuda(
-		float* y, const float* x, const float* w, const float* b,
-		int nOutChannel, int nRowY, int nColY,
-		int nInChannel, int nRowX, int nColX, int kernelSize, int stride, int padding, int nJobs)
+	__global__ void ForwardMaxPool_Cuda(float* y, float* maxIndex, const float* x, int nImages, int nInChannel, int nRow, int nCol)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (index >= nJobs) return;
-
-		int yIndex = index;
-		int image = index / (nOutChannel * nRowY * nColY);
-		index -= image * (nOutChannel * nRowY * nColY);
-		int outChannel = index / (nRowY * nColY);
-		index -= outChannel * (nRowY * nColY);
-		int rowY = index / nColY;
-		int colY = index % nColY;
-
-		y[yIndex] = 0.0f;
-		int startRowX = rowY * stride - padding;
-		int startColX = colY * stride - padding;
-		for (int inChannel = 0; inChannel < nInChannel; ++inChannel)
-		{
-			for (int rowX = startRowX; rowX < startRowX + kernelSize; ++rowX)
-			{
-				if (rowX < 0 || rowX >= nRowX) continue;
-				int xBaseIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX;
-				int wBaseIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + (rowX - startRowX) * kernelSize;
-				for (int colX = startColX; colX < startColX + kernelSize; ++colX)
-				{
-					if (colX < 0 || colX >= nColX) continue;
-					y[yIndex] += x[xBaseIndex + colX] * w[wBaseIndex + (colX - startColX)];
-				}
-			}
-		}
-		y[yIndex] += b[outChannel];
-	}
-
-	__global__ void BackwardConv2d_Wg_Cuda(float* wG, const float* x, const float* yG,
-		int nOutChannel, int nInChannel,
-		int nImages, int nRowY, int nColY, int nRowX, int nColX, int kernelSize, int stride, int padding, int nJobs)
-	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (index >= nJobs) return;
-
-		int wIndex = index;
-		int outChannel = index / (nInChannel * kernelSize * kernelSize);
-		index -= outChannel * (nInChannel * kernelSize * kernelSize);
-		int inChannel = index / (kernelSize * kernelSize);
-		index -= inChannel * (kernelSize * kernelSize);
-		int rowW = index / nColY;
-		int colW = index % nColY;
-
-		wG[wIndex] = 0.0f;
-		for (int image = 0; image < nImages; ++image)
-		{
-			for (int rowY = 0; rowY < nRowY; ++rowY)
-			{
-				for (int colY = 0; colY < nColY; ++colY)
-				{
-					int rowX = rowY * stride - padding + rowW;
-					if (rowX < 0 || rowX >= nRowX) continue;
-					int colX = colY * stride - padding + colW;
-					if (colX < 0 || colX >= nColX) continue;
-					int yIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY + colY;
-					int xIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX + colX;
-					wG[wIndex] += x[xIndex] * yG[yIndex];
-				}
-			}
-		}
-		wG[wIndex] /= nImages;
-	}
-
-	__global__ void BackwardConv2d_Xg_Cuda(float* xG, const float* w, const float* yG,
-		int nImages, int nInChannel, int nRowX, int nColX, 
-		int nOutChannel, int nRowY, int nColY,
-		int kernelSize, int stride, int padding, int nJobs)
-	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (index >= nJobs) return;
-
-		int xIndex = index;
-		int image = index / (nInChannel * nRowX * nColX);
-		index -= image * (nInChannel * nRowX * nColX);
-		int inChannel = index / (nRowX * nColX);
-		index -= inChannel * (nRowX * nColX);
-		int rowX = index / nColY;
-		int colX = index % nColY;
-
-		xG[xIndex] = 0.0f;
-		// Note(dongwook): Iterate all y's which use the current x
-		for (int rowY = 0; rowY < nRowY; ++rowY)
-		{
-			int upperX = rowY * stride - padding;
-			if (rowX < upperX) continue;
-			if (upperX + kernelSize <= rowX) break;
-			int rowW = rowX - upperX;
-			for (int colY = 0; colY < nColY; ++colY)
-			{
-				int leftX = colY * stride - padding;
-				if (colX < leftX) continue;
-				if (leftX + kernelSize <= colX) break;
-				int colW = colX - leftX;
-				for (int outChannel = 0; outChannel < nOutChannel; ++outChannel)
-				{
-					int yIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY + colY;
-					int wIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + rowW * kernelSize + colW;
-					xG[xIndex] += w[wIndex] * yG[yIndex];
-				}
-			}
-		}
-	}
-
-	__global__ void BackwardConv2d_Bg_Cuda(float* bG, const float* yG, int nImages, int nOutChannel, int nRowY, int nColY)
-	{
-		int outChannel = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		if (outChannel >= nOutChannel) return;
-
-		bG[outChannel] = 0.0f;
-		for (int image = 0; image < nImages; ++image)
-		{
-			for (int rowY = 0; rowY < nRowY; ++rowY)
-			{
-				int yBaseIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY;
-				for (int colY = 0; colY < nColY; ++colY)
-				{
-					bG[outChannel] += yG[yBaseIndex + colY];
-				}
-			}
-		}
-		bG[outChannel] /= nImages;
-	}
-
-	__global__ void ForwardMaxPool_Cuda(float* y, float* maxIndex, const float* x, int nImages, int nOutChannel, int nRow, int nCol)
-	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
-		int nJobs = nImages * nOutChannel * nRow * nCol;
+		int nJobs = nImages * nInChannel * nRow * nCol;
 		if (nJobs <= index) return;
 
-		int yIndex = index;
-		int image = index / (nOutChannel * nRow * nCol);
-		index -= image * (nOutChannel * nRow * nCol);
-		int outChannel = index / (nRow * nCol);
-		index -= outChannel * (nRow * nCol);
+		const int yIndex = index;
+		int image = index / (nInChannel * nRow * nCol);
+		index -= image * (nInChannel * nRow * nCol);
+		int inChannel = index / (nRow * nCol);
+		index -= inChannel * (nRow * nCol);
 		int row = index / nCol;
 		int col = index % nCol;
 
-		int xIndex = image * (nOutChannel * nRow * nCol * 4) + outChannel * (nRow * nCol * 4) + row * nCol * 2 + col * 2;
+		int xIndex = image * (nInChannel * nRow * nCol * 4) + inChannel * (nRow * nCol * 4) + row * nCol * 4 + col * 2;
 		float maxVal = x[xIndex], maxIdx = 0;
 		if (maxVal < x[xIndex + 1])
 		{
@@ -428,7 +454,7 @@ namespace ff
 		int row = index / nCol;
 		int col = index % nCol;
 
-		int xGindex = image * (nOutChannel * nRow * nCol * 4) + outChannel * (nRow * nCol * 4) + row * nCol * 2 + col * 2;
+		int xGindex = image * (nOutChannel * nRow * nCol * 4) + outChannel * (nRow * nCol * 4) + row * nCol * 4 + col * 2;
 		xG[xGindex] = 0.0f;
 		xG[xGindex + 1] = 0.0f;
 		xG[xGindex + nCol * 2] = 0.0f;
@@ -472,7 +498,8 @@ namespace ff
 		int nJobs = _y._d3 * _y._d2 * _y._d1 * _y._d0;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-		ForwardConv2d_Cuda<<<blocks, threads>>>(_y._dataGpu, _pX->_dataGpu, _w._dataGpu, _b._dataGpu,
+		ForwardConv2d_Cuda<<<blocks, threads>>>(
+			_y._dataGpu, _pX->_dataGpu, _w._dataGpu, _b._dataGpu,
 			_y._d2, _y._d1, _y._d0, 
 			_pX->_d2, _pX->_d1, _pX->_d0, 
 			_kernelSize, _stride, _padding, nJobs);
@@ -532,7 +559,8 @@ namespace ff
 			int nJobs = _wG._d3 * _wG._d2 * _wG._d1 * _wG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_Wg_Cuda << <blocks, threads >> > (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu,
+			BackwardConv2d_Wg_Cuda <<<blocks, threads >>> (
+				_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu,
 				_wG._d3, _wG._d2,
 				yG->_d3, yG->_d1, yG->_d0, _pX->_d1, _pX->_d0,
 				_kernelSize, _stride, _padding, nJobs);
@@ -551,7 +579,8 @@ namespace ff
 			int nJobs = _xG._d3 * _xG._d2 * _xG._d1 * _xG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_Xg_Cuda << <blocks, threads >> > (_xG._dataGpu, _w._dataGpu, yG->_dataGpu,
+			BackwardConv2d_Xg_Cuda << <blocks, threads >> > (
+				_xG._dataGpu, _w._dataGpu, yG->_dataGpu,
 				_xG._d3, _xG._d2, _xG._d1, _xG._d0,
 				yG->_d2, yG->_d1, yG->_d0,
 				_kernelSize, _stride, _padding, nJobs);
@@ -696,6 +725,7 @@ namespace ff
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
 		ForwardMaxPool_Cuda <<< block, threads >>> (_y._dataGpu, _maxIndex._dataGpu, _pX->_dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
+		assert(cudaGetLastError() == cudaSuccess);
 #else 
 		const_cast<CudaTensor*>(_pX)->PullFromGpu();
 		for (int image = 0; image < _y._d3; ++image)
@@ -707,7 +737,7 @@ namespace ff
 					for (int col = 0; col < _y._d0; ++col)
 					{
 						int yIndex = image * (_y._d2 * _y._d1 * _y._d0) + outChannel * (_y._d1 * _y._d0) + row * _y._d0 + col;
-						int xIndex = image * (_y._d2 * _y._d1 * _y._d0 * 4) + outChannel * (_y._d1 * _y._d0 * 4) + 2 * row * _y._d0 + 2 * col;
+						int xIndex = image * (_y._d2 * _y._d1 * _y._d0 * 4) + outChannel * (_y._d1 * _y._d0 * 4) + 4 * row * _y._d0 + 2 * col;
 						float maxVal = _pX->_data[xIndex], maxIndex = 0;
 						if (maxVal < _pX->_data[xIndex + 1])
 						{
@@ -747,6 +777,7 @@ namespace ff
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
 			BackwardMaxPool_Cuda << < block, threads >> > (_xG._dataGpu, yG->_dataGpu, _maxIndex._dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
+			assert(cudaGetLastError() == cudaSuccess);
 #else
 			const_cast<CudaTensor*>(yG)->PullFromGpu();
 			for (int image = 0; image < yG->_d3; ++image)
@@ -758,7 +789,7 @@ namespace ff
 						for (int col = 0; col < yG->_d0; ++col)
 						{
 							int yGindex = image * (yG->_d2 * yG->_d1 * yG->_d0) + outChannel * (yG->_d1 * yG->_d0) + row * yG->_d0 + col;
-							int xGindex = image * (_xG._d2 * _xG._d1 * _xG._d0 * 4) + outChannel * (_xG._d1 * _xG._d0 * 4) + row * _xG._d0 * 2 + col * 2;
+							int xGindex = image * (_xG._d2 * _xG._d1 * _xG._d0 * 4) + outChannel * (_xG._d1 * _xG._d0 * 4) + row * _xG._d0 * 4 + col * 2;
 							_xG._data[xGindex] = 0.0f;
 							_xG._data[xGindex + 1] = 0.0f;
 							_xG._data[xGindex + _xG._d0] = 0.0f;

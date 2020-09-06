@@ -6,10 +6,6 @@ namespace ff
 {
 	class CudaNn;
 
-#define DISALLOW_COPY_AND_ASSIGN(TypeName)	\
-	TypeName(TypeName&) = delete;			\
-	void operator=(TypeName) = delete;
-
 	class CudaTensor
 	{
 	public:
@@ -36,6 +32,8 @@ namespace ff
 		void PushToGpu();
 
 		void PullFromGpu();
+
+		void WriteOut(int nCol, int nRow, const char* filename);
 
 	public:
 		int _d0, _d1, _d2, _d3, _dataSize;

@@ -39,7 +39,7 @@ int simple()
 	y.SetRandom();
 #endif
 
-	float learningRate = 0.00001f;
+	float learningRate = 0.0001f;
 	const ff::CudaTensor* yPred = nullptr;
 	for (int i = 0; i < 10000; ++i)
 	{

@@ -97,13 +97,16 @@ int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector
 	{
 		pSoftmax = const_cast<ff::CudaTensor*>(nn.Forward(&images[i]));
 		pSoftmax->PullFromGpu();
-		imageCounter += pSoftmax->_d1;
 		assert(labels[i]._d0 == pSoftmax->_d1);
 		for (int j = 0; j < pSoftmax->_d1; ++j)
 		{
 			float val = pSoftmax->_data[static_cast<int>(labels[i]._data[j]) + pSoftmax->_d0 * j];
 			assert(val > 0.0f);
-			loss += -logf(val);
+			if (val > 0.0f)
+			{
+				++imageCounter;
+				loss += -logf(val);
+			}
 		}
 		int t1, t3, t5;
 		CheckAccuracy(pSoftmax, labels[i], t1, t3, t5);
@@ -115,7 +118,7 @@ int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector
 
 int cifar10()
 {
-	const int kBatchSize = 100;
+	const int kBatchSize = 50;
 
 	std::vector<std::string> trainingDataFilenames;
 	trainingDataFilenames.push_back("cifar-10/data_batch_1.bin");
@@ -125,32 +128,39 @@ int cifar10()
 	trainingDataFilenames.push_back("cifar-10/data_batch_5.bin");
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
-	std::vector<std::string> testDataFilenames;
 	LoadCifar10(kBatchSize, 50000, trainingDataFilenames, trainingImages, trainingLabels);
+	std::vector<std::string> testDataFilenames;
 	testDataFilenames.push_back("cifar-10/test_batch.bin");
 	std::vector<ff::CudaTensor> testImages;
 	std::vector<ff::CudaTensor> testLabels;
 	LoadCifar10(kBatchSize, 10000, testDataFilenames, testImages, testLabels);
 
-	ff::CudaNn nn; // total parameters: 6,404,800
-	nn.AddConv2d(3, 3, 64, 1, 1);		// 32 * 32 * 64
+	ff::CudaNn nn;
+	nn.AddConv2d(3, 3, 64, 1, 1);
 	nn.AddRelu();
-	nn.AddConv2d(3, 64, 64, 1, 1);		// 32 * 32 * 64
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 64, 128, 1, 1);
 	nn.AddRelu();
-	nn.AddMaxPool();					// 16 * 16 * 64
-	nn.AddConv2d(3, 64, 64, 1, 1);		// 16 * 16 * 64 
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 128, 256, 1, 1);
 	nn.AddRelu();
-	nn.AddConv2d(3, 64, 32, 1, 1);		// 16 * 16 * 32
+	nn.AddConv2d(3, 256, 256, 1, 1);
 	nn.AddRelu();
-	nn.AddConv2d(3, 32, 32, 1, 1);		// 16 * 16 * 32
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 256, 512, 1, 1);
 	nn.AddRelu();
-	nn.AddMaxPool();					// 8 * 8 * 32
-	nn.AddFc(2048, 2048);
+	nn.AddConv2d(3, 512, 512, 1, 1);
 	nn.AddRelu();
-	nn.AddFc(2048, 1024);
+	nn.AddMaxPool();
+	nn.AddFc(4 * 512, 4096);
 	nn.AddRelu();
-	nn.AddFc(1024, 10);
+	nn.AddFc(4096, 4096);
+	nn.AddRelu();
+	nn.AddFc(4096, 10);
 	nn.AddSoftmax();
+
+	float learningRate = 0.0002f;
+	printf("* Initial learning rate(%f)\n", learningRate);
 
 	float last_validation_loss = 1e8f;
 	float lowest_validation_loss = 1e8f;
@@ -159,9 +169,6 @@ int cifar10()
 	const size_t numBatch = trainingImages.size();
 	int currValidationDataIndex = 0;
 	int numValidationData = static_cast<int>(numBatch) / 5;
-
-	float learningRate = 0.0005f;
-	printf("* Initial learning rate(%f)\n", learningRate);
 
 	char buffer[2048];
 	const int numEpoch = 100000;
@@ -173,15 +180,17 @@ int cifar10()
 		// Training
 		for (size_t j = 0; j < numBatch; ++j)
 		{
-			//if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
-			//{
-			//	continue; // Exclude validation data from training set
-			//}
+			if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
+			{
+				continue; // Exclude validation data from training set
+			}
 
 			nn.Forward(&trainingImages[j], true);
 			nn.Backward(&trainingLabels[j]);
 			nn.UpdateWs(learningRate);
 		}
+
+		learningRate *= 0.9f; // learning rate decay
 
 		// Validation loss
 		{
@@ -197,10 +206,9 @@ int cifar10()
 			if (loss > last_validation_loss)
 			{
 				// Learning rate decay
-				//learningRate *= 0.5f;
-				printf("- Learning rate decreased(%f)\n", learningRate);
+				//learningRate *= 0.1f;
+				//printf("- Learning rate decreased(%f)\n", learningRate);
 			}
-			learningRate *= 0.995f; // learning rate decay
 			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
 				testCounter,
 				loss, loss - last_validation_loss, lowest_validation_loss,
