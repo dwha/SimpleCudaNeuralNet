@@ -160,7 +160,7 @@ int cifar10()
 	int currValidationDataIndex = 0;
 	int numValidationData = static_cast<int>(numBatch) / 5;
 
-	float learningRate = 0.0001f;
+	float learningRate = 0.0005f;
 	printf("* Initial learning rate(%f)\n", learningRate);
 
 	char buffer[2048];
@@ -173,10 +173,10 @@ int cifar10()
 		// Training
 		for (size_t j = 0; j < numBatch; ++j)
 		{
-			if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
-			{
-				continue; // Exclude validation data from training set
-			}
+			//if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
+			//{
+			//	continue; // Exclude validation data from training set
+			//}
 
 			nn.Forward(&trainingImages[j], true);
 			nn.Backward(&trainingLabels[j]);

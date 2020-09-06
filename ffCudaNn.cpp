@@ -890,7 +890,7 @@ namespace ff
 		int nJobs = _xRelu._d0 * _xRelu._d1 * _xRelu._d2 * _xRelu._d3;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-		Relu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, nJobs);
+		ForwardRelu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, nJobs);
 		assert(cudaGetLastError() == cudaSuccess);
 		return &_xRelu;
 	}
@@ -904,7 +904,7 @@ namespace ff
 			int nJobs = _xRelu._d0 * _xRelu._d1 * _xRelu._d2 * _xRelu._d3;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			ReluG_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _pX->_dataGpu, nJobs);
+			BackwardRelu_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _pX->_dataGpu, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_xG;
