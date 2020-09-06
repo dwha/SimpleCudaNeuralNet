@@ -170,26 +170,20 @@ int cifar10()
 		sprintf(buffer, "-- Epoch %03d", i + 1);
 		ProfileScope __m(buffer);
 
-		//unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-		//std::shuffle(trainingImages.begin(), trainingImages.end(), std::default_random_engine(seed));
-		//std::shuffle(trainingLabels.begin(), trainingLabels.end(), std::default_random_engine(seed));
 		// Training
 		for (size_t j = 0; j < numBatch; ++j)
 		{
-			//if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
-			//{
-			//	continue; // Exclude validation data from training set
-			//}
+			if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
+			{
+				continue; // Exclude validation data from training set
+			}
 
 			nn.Forward(&trainingImages[j], true);
 			nn.Backward(&trainingLabels[j]);
 			nn.UpdateWs(learningRate);
-			//nn.Pull();
 		}
 
 		// Validation loss
-		learningRate *= 0.995f; // learning rate decay
-		if (1)
 		{
 			int top1 = 0, top3 = 0, top5 = 0;
 			float loss = 0.0f;
