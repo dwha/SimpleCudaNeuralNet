@@ -135,6 +135,8 @@ int cifar10()
 	std::vector<ff::CudaTensor> testLabels;
 	LoadCifar10(kBatchSize, 10000, testDataFilenames, testImages, testLabels);
 
+	// Val_[10000](Loss: 0.968940(-0.008915) / 0.968940, Top1 : 06611, Top3 : 09112, Top5: 09716)
+	// Test[10000](Loss: 1.457007(+0.005526) / 1.312774, Top1 : 05538, Top3: 08416, Top5: 09387)
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 3, 64, 1, 1);
 	nn.AddRelu();
@@ -144,10 +146,10 @@ int cifar10()
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 128, 256, 1, 1);
 	nn.AddRelu();
-	nn.AddConv2d(3, 256, 256, 1, 1);
+	nn.AddConv2d(3, 256, 512, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();
-	nn.AddConv2d(3, 256, 512, 1, 1);
+	nn.AddConv2d(3, 512, 512, 1, 1);
 	nn.AddRelu();
 	nn.AddConv2d(3, 512, 512, 1, 1);
 	nn.AddRelu();
@@ -159,22 +161,32 @@ int cifar10()
 	nn.AddFc(4096, 10);
 	nn.AddSoftmax();
 
-	float learningRate = 0.0002f;
-	printf("* Initial learning rate(%f)\n", learningRate);
-
+	float learningRate = 0.00001f;
 	float last_validation_loss = 1e8f;
 	float lowest_validation_loss = 1e8f;
 	float last_test_loss = 1e8f;
 	float lowest_test_loss = 1e8f;
+	int stagnancy = 0;
+
 	const size_t numBatch = trainingImages.size();
 	int currValidationDataIndex = 0;
 	int numValidationData = static_cast<int>(numBatch) / 5;
 
 	char buffer[2048];
-	const int numEpoch = 100000;
+	const int numEpoch = 200;
 	for (int i = 0; i < numEpoch; ++i)
 	{
-		sprintf(buffer, "-- Epoch %03d", i + 1);
+		float currLearningRate = learningRate;
+
+		// gradual decay
+		const float kDecay = 0.1f;
+		const int kCooldown = 10;
+		//if (i >= kCooldown)
+		//{
+		//	currLearningRate *= expf(-1.0f * kDecay * (i - kCooldown));
+		//}
+
+		sprintf(buffer, "-- Epoch %03d(lr: %f)", i + 1, currLearningRate);
 		ProfileScope __m(buffer);
 
 		// Training
@@ -187,10 +199,8 @@ int cifar10()
 
 			nn.Forward(&trainingImages[j], true);
 			nn.Backward(&trainingLabels[j]);
-			nn.UpdateWs(learningRate);
+			nn.UpdateWs(currLearningRate);
 		}
-
-		learningRate *= 0.9f; // learning rate decay
 
 		// Validation loss
 		{
@@ -199,15 +209,18 @@ int cifar10()
 			int testCounter = ComputeLoss(nn, trainingImages, trainingLabels, currValidationDataIndex, currValidationDataIndex + numValidationData,
 				loss, top1, top3, top5);
 			if (0 == i) last_validation_loss = loss;
+			++stagnancy;
 			if (loss < lowest_validation_loss)
 			{
 				lowest_validation_loss = loss;
+				stagnancy = 0;
 			}
-			if (loss > last_validation_loss)
+			const int kPatient = 2;
+			const float kDecayRate = 0.5f;
+			if (stagnancy >= kPatient)
 			{
 				// Learning rate decay
-				//learningRate *= 0.1f;
-				//printf("- Learning rate decreased(%f)\n", learningRate);
+				learningRate *= kDecayRate;
 			}
 			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
 				testCounter,

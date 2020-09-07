@@ -11,7 +11,7 @@ namespace ff
 	///////////////////////////////////////////////////////////////////////
 	static std::default_random_engine g_generator;
 	static std::uniform_real_distribution<float> g_uniformDistribution;
-	static std::normal_distribution<float> g_normalDistribution(0.0f, 1.0f);
+	static std::normal_distribution<float> g_normalDistribution;
 
 
 	CudaTensor::CudaTensor() : _d0(0), _d1(0), _d2(0), _d3(0), _dataSize(0), _dataGpu(nullptr), _dataGpuSize(0)
@@ -149,12 +149,12 @@ namespace ff
 		int c = wGindex % nWcol;
 
 		// wG = x.T * yG
-		wG[wGindex] = 0.0f;
+		float val = 0.0f;
 		for (int i = 0; i < nXrow; ++i)
 		{
-			wG[wGindex] += x[r + i * nXcol] * yG[c + i * nWcol];
+			val += x[r + i * nXcol] * yG[c + i * nWcol];
 		}
-		wG[wGindex] /= nXrow;
+		wG[wGindex] = val / nXrow;
 	}
 
 	__global__ void BackwardFc_Bg_Cuda(float* bG, const float* yG, int nYgCol, int nYgRow)
@@ -162,12 +162,12 @@ namespace ff
 		const int c = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (c >= nYgCol) return;
 
-		bG[c] = 0.0;
+		float val = 0.0f;
 		for (int i = 0; i < nYgRow; ++i)
 		{
-			bG[c] += yG[c + i * nYgCol];
+			val += yG[c + i * nYgCol];
 		}
-		bG[c] /= nYgRow;
+		bG[c] = val / nYgRow;
 	}
 
 	__global__ void BackwardFc_Xg_Cuda(float* xG, const float* yG, const float* w, int yGw, int wTh, int xGw, int nJobs)
@@ -178,13 +178,14 @@ namespace ff
 		int c = xGindex % xGw;
 
 		// xG = yG * w.T
-		xG[xGindex] = 0.0f;
+		float val = 0.0f;
 		int yGbaseIndex = r * yGw;
 		int wBaseIndex = c * wTh;
 		for (int i = 0; i < yGw; ++i)
 		{
-			xG[xGindex] += yG[i + yGbaseIndex] * w[i + wBaseIndex];
+			val += yG[i + yGbaseIndex] * w[i + wBaseIndex];
 		}
+		xG[xGindex] = val;
 	}
 
 	__global__ void ForwardConv2d_Cuda(
@@ -204,7 +205,7 @@ namespace ff
 		int rowY = index / nColY;
 		int colY = index % nColY;
 
-		y[yIndex] = 0.0f;
+		float val = 0.0f;
 		int startRowX = rowY * stride - padding;
 		int startColX = colY * stride - padding;
 		for (int inChannel = 0; inChannel < nInChannel; ++inChannel)
@@ -217,11 +218,11 @@ namespace ff
 				for (int colX = startColX; colX < startColX + kernelSize; ++colX)
 				{
 					if (colX < 0 || colX >= nColX) continue;
-					y[yIndex] += x[xBaseIndex + colX] * w[wBaseIndex + (colX - startColX)];
+					val += x[xBaseIndex + colX] * w[wBaseIndex + (colX - startColX)];
 				}
 			}
 		}
-		y[yIndex] += b[outChannel];
+		y[yIndex] = val + b[outChannel];
 	}
 
 	__global__ void BackwardConv2d_Wg_Cuda(
@@ -241,24 +242,24 @@ namespace ff
 		int rowW = index / kernelSize;
 		int colW = index % kernelSize;
 
-		wG[wIndex] = 0.0f;
+		float val = 0.0f;
 		for (int image = 0; image < nImages; ++image)
 		{
 			for (int rowY = 0; rowY < nRowY; ++rowY)
 			{
+				int rowX = rowY * stride - padding + rowW;
+				if (rowX < 0 || rowX >= nRowX) continue;
 				for (int colY = 0; colY < nColY; ++colY)
 				{
-					int rowX = rowY * stride - padding + rowW;
-					if (rowX < 0 || rowX >= nRowX) continue;
 					int colX = colY * stride - padding + colW;
 					if (colX < 0 || colX >= nColX) continue;
 					int yIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY + colY;
 					int xIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX + colX;
-					wG[wIndex] += x[xIndex] * yG[yIndex];
+					val += x[xIndex] * yG[yIndex];
 				}
 			}
 		}
-		wG[wIndex] /= nImages;
+		wG[wIndex] = val / nImages;
 	}
 
 	__global__ void BackwardConv2d_Bg_Cuda(float* bG, const float* yG, int nImages, int nOutChannel, int nRowY, int nColY)
@@ -266,7 +267,7 @@ namespace ff
 		const int outChannel = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (outChannel >= nOutChannel) return;
 
-		bG[outChannel] = 0.0f;
+		float val = 0.0f;
 		for (int image = 0; image < nImages; ++image)
 		{
 			for (int rowY = 0; rowY < nRowY; ++rowY)
@@ -274,11 +275,11 @@ namespace ff
 				int yBaseIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY;
 				for (int colY = 0; colY < nColY; ++colY)
 				{
-					bG[outChannel] += yG[yBaseIndex + colY];
+					val += yG[yBaseIndex + colY];
 				}
 			}
 		}
-		bG[outChannel] /= nImages;
+		bG[outChannel] = val / nImages;
 	}
 
 	__global__ void BackwardConv2d_Xg_Cuda(
@@ -298,7 +299,7 @@ namespace ff
 		int rowX = index / nColX;
 		int colX = index % nColX;
 
-		xG[xIndex] = 0.0f;
+		float val = 0.0f;
 		// Note(dongwook): Iterate all y's which use the current x
 		for (int rowY = 0; rowY < nRowY; ++rowY)
 		{
@@ -316,10 +317,11 @@ namespace ff
 				{
 					int yIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY + colY;
 					int wIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + rowW * kernelSize + colW;
-					xG[xIndex] += w[wIndex] * yG[yIndex];
+					val += w[wIndex] * yG[yIndex];
 				}
 			}
 		}
+		xG[xIndex] = val;
 	}
 
 	__global__ void BackwardSumOfSqures(float* yG, const float* y, const float* yLabel, int nJobs)
@@ -341,11 +343,17 @@ namespace ff
 		//w[index] -= wG[index] * learningRate;
 
 		// Adam
-		wG_m[index] = beta1 * wG_m[index] + (1.0 - beta1) * wG[index];
-		wG_v[index] = beta2 * wG_v[index] + (1.0 - beta2) * wG[index] * wG[index];
-		float unbiased_m = wG_m[index] / (1.0 - beta1t);
-		float unbiased_v = wG_v[index] / (1.0 - beta2t);
-		w[index] -= (learningRate * unbiased_m / (sqrtf(unbiased_v) + 1e-8f));
+		float g = wG[index];
+		float m = wG_m[index];
+		float v = wG_v[index];
+		m = beta1 * m + (1.0 - beta1) * g;
+		v = beta2 * v + (1.0 - beta2) * g * g;
+		float unbiased_m = m / (1.0 - beta1t);
+		float unbiased_v = v / (1.0 - beta2t);
+		wG_m[index] = m;
+		wG_v[index] = v;
+		float impv = learningRate * unbiased_m / (sqrtf(unbiased_v) + 1e-8f);
+		w[index] -= impv;
 	}
 
 	__global__ void ForwardRelu_Cuda(float* relu_x, const float* x, int nJobs)
