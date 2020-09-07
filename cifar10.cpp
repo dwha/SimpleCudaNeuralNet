@@ -29,7 +29,7 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 {
 	const int kFileBinarySize = 30730000;
 	const int kNumImagePerFile = 10000;
-	const int kNumBytesPerChannel = 1024; // 32 * 32
+	const int kNumBytesPerCh = 1024; // 32 * 32
 	const int kNumChannel = 3;
 	int numFiles = (int)filenames.size();
 	int numTotalImages = numFiles * kNumImagePerFile;
@@ -64,12 +64,13 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 			int batchIndex = imageCounter / batchSize;
 			int elementIndex = imageCounter % batchSize;
 			labels[batchIndex]._data[elementIndex] = static_cast<float>(*pCurr++);
-			for (int c = 0; c < 3; ++c)
+			for (int c = 0; c < kNumChannel; ++c)
 			{
-				for (int k = 0; k < kNumBytesPerChannel; ++k)
+				for (int k = 0; k < kNumBytesPerCh; ++k)
 				{
 					float val = *pCurr++;
-					images[batchIndex]._data[elementIndex * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + k] = (val - mean[c]) / std[c];
+					//images[batchIndex]._data[elementIndex * kNumBytesPerCh * kNumChannel + c * kNumBytesPerChannel + k] = val / 255.0f;
+					images[batchIndex]._data[elementIndex * kNumBytesPerCh * kNumChannel + c * kNumBytesPerCh + k] = (val - mean[c]) / std[c];
 				}
 			}
 			++imageCounter;
@@ -135,8 +136,6 @@ int cifar10()
 	std::vector<ff::CudaTensor> testLabels;
 	LoadCifar10(kBatchSize, 10000, testDataFilenames, testImages, testLabels);
 
-	// Val_[10000](Loss: 0.968940(-0.008915) / 0.968940, Top1 : 06611, Top3 : 09112, Top5: 09716)
-	// Test[10000](Loss: 1.457007(+0.005526) / 1.312774, Top1 : 05538, Top3: 08416, Top5: 09387)
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 3, 64, 1, 1);
 	nn.AddRelu();
@@ -168,9 +167,9 @@ int cifar10()
 	float lowest_test_loss = 1e8f;
 	int stagnancy = 0;
 
-	const size_t numBatch = trainingImages.size();
+	const int numBatch = (int)trainingImages.size();
 	int currValidationDataIndex = 0;
-	int numValidationData = static_cast<int>(numBatch) / 5;
+	int numValidationData = numBatch / 5;
 
 	char buffer[2048];
 	const int numEpoch = 200;
@@ -179,18 +178,19 @@ int cifar10()
 		float currLearningRate = learningRate;
 
 		// gradual decay
-		const float kDecay = 0.1f;
-		const int kCooldown = 10;
+		//const float kDecay = 0.1f;
+		//const int kCooldown = 10;
 		//if (i >= kCooldown)
 		//{
 		//	currLearningRate *= expf(-1.0f * kDecay * (i - kCooldown));
 		//}
 
-		sprintf(buffer, "-- Epoch %03d(lr: %f)", i + 1, currLearningRate);
+		printf("- learningRate: %f\n", currLearningRate);
+		sprintf(buffer, "-- Epoch %03d completed", i + 1);
 		ProfileScope __m(buffer);
 
 		// Training
-		for (size_t j = 0; j < numBatch; ++j)
+		for (int j = 0; j < numBatch; ++j)
 		{
 			if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
 			{

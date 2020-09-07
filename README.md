@@ -1,7 +1,7 @@
 ﻿# SimpleCudaNeuralNet
 This is for studying both neural network and CUDA.
 
-I focused on simplicity and conciseness while coding. It is a self-studying result for better understanding of back-propagation algorithm. It'd be good if this C++ code fragment helps someone who has an interest in deep learning.
+I focused on simplicity and conciseness while coding. It is a self-studying result for better understanding of back-propagation algorithm. It'd be good if this C++ code fragment helps someone who has an interest in deep learning. [cs231n](http://cs231n.stanford.edu/2017/syllabus) from stanford is a good starting point.
 
 ## Status
 #### Weight layers (w/ He initialization)
@@ -23,11 +23,19 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 * Adam
 
 ## Result
+#### Handwritten digit recognition
 ![ffCudaNn](https://user-images.githubusercontent.com/670560/91796552-735ee780-ec5b-11ea-88fc-0f0a343ce8d6.png)
 
-It was very easy to build handwritten digit recognizer using [MNIST database](http://yann.lecun.com/exdb/mnist/). My first attempt on 2-layer FCNN (1000 hidden unit) could achieve 1.56% Top-1 error rate after 14 epochs which take less than 30 seconds of training time on RTX 2070 graphics card.
+After basic components for deep learning implemented, I tried to build a handwritten digit recognizer using [MNIST database](http://yann.lecun.com/exdb/mnist/). A simple 2-layer FCNN(1000 hidden unit) could achieve 1.56% Top-1 error rate after 14 epochs which take less than 20 seconds of training time on RTX 2070 graphics card. (See [mnist.cpp](mnist.cpp))
 
-Even naive CUDA implementation easily speeds up by 700x more than single core CPU(Intel i9-9900K) version.
+#### CIFAR-10 photo classification
+![Screenshot from 2020-09-07 17-32-32](https://user-images.githubusercontent.com/670560/92366609-5a10dc00-f130-11ea-92f3-fd0244e5e3fe.png)
 
-Double precision floating point on the CUDA kernels was 3~4x slower than single precision counterpart, in my case.
+In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolution neural network for image classification task. It has 9 weight layers. [CIFAR-10](https://www. cs.toronto.edu/~kriz/cifar.html) dataset is used and not augmented for convenience. The model could achieve 44% top-1 error rate after 23 epoches. It took 180 seconds per epoch on my RTX 2070.
+
+#### Notes
+
+Even naive CUDA implementation easily speeds up by 700x more than single-core/no-SIMD CPU version.
+
+Double precision floating point on the CUDA kernels was 3~4x slower than single precision operations.
 
