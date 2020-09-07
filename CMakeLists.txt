@@ -4,7 +4,7 @@ cmake_minimum_required (VERSION 3.0)
 
 project (SimpleCudaNeuralNet LANGUAGES CXX CUDA)
 
-set( CMAKE_BUILD_TYPE RELEASE )
+set( CMAKE_BUILD_TYPE DEBUG )
 
 find_package(CUDA REQUIRED)
 
