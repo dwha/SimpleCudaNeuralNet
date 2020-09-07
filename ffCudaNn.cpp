@@ -405,7 +405,7 @@ namespace ff
 		if (yLabel[r] == c) lossG[index] -= 1.0f;
 	}
 
-	__global__ void Dropout_Cuda(float* x, const float* dropoutMask, int nCol, int nJobs)
+	__global__ void Dropout_Cuda(float* x, const float* dropoutMask, int nJobs)
 	{
 		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
 		if (index >= nJobs) return;
@@ -503,7 +503,7 @@ namespace ff
 		_y.ResetTensor(nColY, nRowY, _w._d3, _pX->_d3);
 
 #if 1
-		int nJobs = _y._d3 * _y._d2 * _y._d1 * _y._d0;
+		int nJobs = _y._dataSize;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
 		ForwardConv2d_Cuda<<<blocks, threads>>>(
@@ -555,42 +555,38 @@ namespace ff
 
 	const CudaTensor* Conv2Layer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		int nColY = (_pX->_d0 + _padding * 2 - _w._d0) / _stride + 1;
-		int nRowY = (_pX->_d1 + _padding * 2 - _w._d1) / _stride + 1;
-
+		assert(_y._dataSize == yG->_dataSize);
 		_xG.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
-		// sx x sy x nOutChannel x nImages 
-		const_cast<CudaTensor*>(yG)->Reshape(nColY, nRowY, _w._d3, _pX->_d3);
 
 #if 1
 		{
-			int nJobs = _wG._d3 * _wG._d2 * _wG._d1 * _wG._d0;
+			int nJobs = _wG._dataSize;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
 			BackwardConv2d_Wg_Cuda <<<blocks, threads >>> (
 				_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu,
 				_wG._d3, _wG._d2,
-				yG->_d3, yG->_d1, yG->_d0, _pX->_d1, _pX->_d0,
+				_y._d3, _y._d1, _y._d0, _pX->_d1, _pX->_d0,
 				_kernelSize, _stride, _padding, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		{
-			assert(_bG._d0 == yG->_d2);
+			assert(_bG._d0 == _y._d2);
 			int nJobs = _bG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_Bg_Cuda <<< blocks, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d3, yG->_d2, yG->_d1, yG->_d0);
+			BackwardConv2d_Bg_Cuda <<< blocks, threads >>> (_bG._dataGpu, _y._dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		if (layerIndex > 0)
 		{
-			int nJobs = _xG._d3 * _xG._d2 * _xG._d1 * _xG._d0;
+			int nJobs = _xG._dataSize;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_Xg_Cuda << <blocks, threads >> > (
+			BackwardConv2d_Xg_Cuda <<<blocks, threads >>> (
 				_xG._dataGpu, _w._dataGpu, yG->_dataGpu,
 				_xG._d3, _xG._d2, _xG._d1, _xG._d0,
-				yG->_d2, yG->_d1, yG->_d0,
+				_y._d2, _y._d1, _y._d0,
 				_kernelSize, _stride, _padding, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
@@ -721,15 +717,129 @@ namespace ff
 		_y.PullFromGpu();
 	}
 
+	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
+	{
+		_w.ResetTensor(outDim, inDim);
+		//_w.Random(1.0 / sqrtf(inDim)); // Xavier initialization
+		_w.SetRandom(1.0f / sqrtf(inDim * 0.5f)); // He initialization
+		_wG.ResetTensor(outDim, inDim);
+		_wG_m.ResetTensor(outDim, inDim);
+		_wG_m.SetZero();
+		_wG_v.ResetTensor(outDim, inDim);
+		_wG_v.SetZero();
+		_b.ResetTensor(outDim);
+		_b.SetZero();
+		_bG.ResetTensor(outDim);
+		_bG_m.ResetTensor(outDim);
+		_bG_m.SetZero();
+		_bG_v.ResetTensor(outDim);
+		_bG_v.SetZero();
+	}
+
+	const CudaTensor* FcLayer::Forward(const CudaTensor* x)
+	{
+		int x_d0 = x->_d0;
+		int x_d1 = x->_d1;
+		if (x_d0 != _w._d1)
+		{
+			x_d0 = x->_d0 * x->_d1 * x->_d2;
+			x_d1 = x->_d3;
+		}
+		assert(x_d0 == _w._d1);
+
+		_pX = x;
+		_y.ResetTensor(_w._d0, x_d1);
+
+		// y = xw+b
+		int nJobs = x_d1 * _w._d0;
+		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+		LinearTransform_Cuda <<< block, threads >>> (_y._dataGpu, _pX->_dataGpu, _w._dataGpu, _b._dataGpu, x_d0, _w._d0, nJobs);
+		assert(cudaGetLastError() == cudaSuccess);
+		return &_y;
+	}
+
+	const CudaTensor* FcLayer::Backward(const CudaTensor* yG, const int layerIndex)
+	{
+		assert(yG->_d0 == _wG._d0);
+		int x_d0 = _pX->_d0;
+		int x_d1 = _pX->_d1;
+		if (x_d0 != _w._d1)
+		{
+			x_d0 = _pX->_d0 * _pX->_d1 * _pX->_d2;
+			x_d1 = _pX->_d3;
+		}
+
+		{
+			// wG = x.T * yG
+			int nJobs = _wG._d1 * _wG._d0;
+			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+			BackwardFc_Wg_Cuda <<< block, threads >>> (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, x_d0, x_d1, _wG._d0, nJobs);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+		{
+			int numBlocks = (_b._d0 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+			BackwardFc_Bg_Cuda <<< block, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d0, yG->_d1);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+
+		if (layerIndex > 0)
+		{
+			assert(yG->_d1 == x_d1);
+			_xG.ResetTensor(x_d0, x_d1);
+			// xG = yG * w.T
+			int nJobs = _xG._d1 * _xG._d0;
+			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+			BackwardFc_Xg_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+		return &_xG;
+	}
+
+	void FcLayer::UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t)
+	{
+		{
+			int nJobs = _w._d1 * _w._d0;
+			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+			UpdateWs_Cuda <<<block, threads >>> (learningRate, beta1, beta2, beta1t, beta2t, _w._dataGpu, _wG._dataGpu, _wG_m._dataGpu, _wG_v._dataGpu, nJobs);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+		{
+			int numBlocks = (_b._d0 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
+			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
+			UpdateWs_Cuda <<< block, threads >>> (learningRate, beta1, beta2, beta1t, beta2t, _b._dataGpu, _bG._dataGpu, _bG_m._dataGpu, _bG_v._dataGpu, _b._d0);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+	}
+
+	void FcLayer::Pull()
+	{
+		_xG.PullFromGpu();
+		_w.PullFromGpu();
+		_wG.PullFromGpu();
+		_wG_m.PullFromGpu();
+		_wG_v.PullFromGpu();
+		_b.PullFromGpu();
+		_bG.PullFromGpu();
+		_bG_m.PullFromGpu();
+		_bG_v.PullFromGpu();
+		_y.PullFromGpu();
+	}
+
 	const CudaTensor* MaxPoolLayer::Forward(const CudaTensor* x)
 	{
 		assert(0 == (x->_d0 % 2) && 0 == (x->_d1 % 2)); 
+
 		_pX = x;
 		_y.ResetTensor(x->_d0 / 2, x->_d1 / 2, x->_d2, x->_d3);
 		_maxIndex.ResetTensor(_y._d0, _y._d1, _y._d2, _y._d3);
 
 #if 1
-		int nJobs = _y._d0 * _y._d1 * _y._d2 * _y._d3;
+		int nJobs = _y._dataSize;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
 		ForwardMaxPool_Cuda <<< block, threads >>> (_y._dataGpu, _maxIndex._dataGpu, _pX->_dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
@@ -776,15 +886,16 @@ namespace ff
 
 	const CudaTensor* MaxPoolLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		_xG.ResetTensor(2 * yG->_d0, 2 * yG->_d1, yG->_d2, yG->_d3);
+		assert(_y._dataSize == yG->_dataSize);
+		_xG.ResetTensor(2 * _y._d0, 2 * _y._d1, _y._d2, _y._d3);
 
 		if (layerIndex > 0)
 		{
 #if 1
-			int nJobs = yG->_d0 * yG->_d1 * yG->_d2 * yG->_d3;
+			int nJobs = _y._dataSize;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardMaxPool_Cuda << < block, threads >> > (_xG._dataGpu, yG->_dataGpu, _maxIndex._dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
+			BackwardMaxPool_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _maxIndex._dataGpu, _y._d3, _y._d2, _y._d1, _y._d0);
 			assert(cudaGetLastError() == cudaSuccess);
 #else
 			const_cast<CudaTensor*>(yG)->PullFromGpu();
@@ -820,113 +931,12 @@ namespace ff
 		_y.PullFromGpu();
 	}
 
-	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
-	{
-		_w.ResetTensor(outDim, inDim);
-		//_w.Random(1.0 / sqrtf(inDim)); // Xavier initialization
-		_w.SetRandom(1.0f / sqrtf(inDim * 0.5f)); // He initialization
-		_wG.ResetTensor(outDim, inDim);
-		_wG_m.ResetTensor(outDim, inDim);
-		_wG_m.SetZero();
-		_wG_v.ResetTensor(outDim, inDim);
-		_wG_v.SetZero();
-		_b.ResetTensor(outDim);
-		_b.SetZero();
-		_bG.ResetTensor(outDim);
-		_bG_m.ResetTensor(outDim);
-		_bG_m.SetZero();
-		_bG_v.ResetTensor(outDim);
-		_bG_v.SetZero();
-	}
-
-	const CudaTensor* FcLayer::Forward(const CudaTensor* x)
-	{
-		if (x->_d0 != _w._d1)
-		{
-			const_cast<CudaTensor*>(x)->Reshape(x->_d0 * x->_d1 * x->_d2, x->_d3);
-		}
-		assert(x->_d0 == _w._d1);
-
-		_pX = x;
-		_y.ResetTensor(_w._d0, _pX->_d1);
-
-		// y = xw+b
-		int nJobs = x->_d1 * _w._d0;
-		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-		LinearTransform_Cuda <<< block, threads >>> (_y._dataGpu, _pX->_dataGpu, _w._dataGpu, _b._dataGpu, _pX->_d0, _w._d0, nJobs);
-		assert(cudaGetLastError() == cudaSuccess);
-		return &_y;
-	}
-
-	const CudaTensor* FcLayer::Backward(const CudaTensor* yG, const int layerIndex)
-	{
-		assert(yG->_d0 == _wG._d0);
-		{
-			// wG = x.T * yG
-			int nJobs = _wG._d1 * _wG._d0;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardFc_Wg_Cuda <<< block, threads >>> (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, _pX->_d0, _pX->_d1, _wG._d0, nJobs);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-		{
-			int numBlocks = (_b._d0 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardFc_Bg_Cuda <<< block, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d0, yG->_d1);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-
-		if (layerIndex > 0)
-		{
-			assert(yG->_d1 == _pX->_d1);
-			_xG.ResetTensor(_pX->_d0, _pX->_d1);
-			// xG = yG * w.T
-			int nJobs = _xG._d1 * _xG._d0;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardFc_Xg_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-		return &_xG;
-	}
-
-	void FcLayer::UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t)
-	{
-		{
-			int nJobs = _w._d1 * _w._d0;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			UpdateWs_Cuda <<<block, threads >>> (learningRate, beta1, beta2, beta1t, beta2t, _w._dataGpu, _wG._dataGpu, _wG_m._dataGpu, _wG_v._dataGpu, nJobs);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-		{
-			int numBlocks = (_b._d0 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			UpdateWs_Cuda <<< block, threads >>> (learningRate, beta1, beta2, beta1t, beta2t, _b._dataGpu, _bG._dataGpu, _bG_m._dataGpu, _bG_v._dataGpu, _b._d0);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-	}
-
-	void FcLayer::Pull()
-	{
-		_xG.PullFromGpu();
-		_w.PullFromGpu();
-		_wG.PullFromGpu();
-		_wG_m.PullFromGpu();
-		_wG_v.PullFromGpu();
-		_b.PullFromGpu();
-		_bG.PullFromGpu();
-		_bG_m.PullFromGpu();
-		_bG_v.PullFromGpu();
-		_y.PullFromGpu();
-	}
 
 	const CudaTensor* ReluLayer::Forward(const CudaTensor* x)
 	{
 		_pX = x;
 		_xRelu.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
-		int nJobs = _xRelu._d0 * _xRelu._d1 * _xRelu._d2 * _xRelu._d3;
+		int nJobs = _xRelu._dataSize;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
 		ForwardRelu_Cuda <<< block, threads >>> (_xRelu._dataGpu, _pX->_dataGpu, nJobs);
@@ -936,11 +946,10 @@ namespace ff
 
 	const CudaTensor* ReluLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		const_cast<CudaTensor*>(yG)->Reshape(_xRelu._d0, _xRelu._d1, _xRelu._d2, _xRelu._d3);
 		if (layerIndex > 0)
 		{
 			_xG.ResetTensor(_xRelu._d0, _xRelu._d1, _xRelu._d2, _xRelu._d3);
-			int nJobs = _xRelu._d0 * _xRelu._d1 * _xRelu._d2 * _xRelu._d3;
+			int nJobs = _xRelu._dataSize;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
 			BackwardRelu_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _pX->_dataGpu, nJobs);
@@ -963,29 +972,29 @@ namespace ff
 		}
 
 		_crossCheck = 1;
-		_dropoutMask.ResetTensor(x->_d0, x->_d1);
+		_dropoutMask.ResetTensor(x->_dataSize);
 		_dropoutMask.SetDropoutMask(_dropoutRate);
 
-		int nJobs = x->_d1 * x->_d0;
+		int nJobs = x->_dataSize;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 		dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-		Dropout_Cuda<<< block, threads >>>(x->_dataGpu, _dropoutMask._dataGpu, x->_d0, nJobs);
+		Dropout_Cuda<<< block, threads >>>(x->_dataGpu, _dropoutMask._dataGpu, nJobs);
 		assert(cudaGetLastError() == cudaSuccess);
 		return x;
 	}
 
 	const CudaTensor* DropoutLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
+		assert(_dropoutMask._dataSize == yG->_dataSize);
 		if (1 != _crossCheck) return yG;
 		_crossCheck = 0;
 
 		if (layerIndex > 0)
 		{
-			assert(yG->_d0 == _dropoutMask._d0 && yG->_d1 == _dropoutMask._d1);
-			int nJobs = yG->_d1 * yG->_d0;
+			int nJobs = _dropoutMask._dataSize;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			Dropout_Cuda << < block, threads >> > (yG->_dataGpu, _dropoutMask._dataGpu, yG->_d0, nJobs);
+			Dropout_Cuda <<< block, threads >>> (yG->_dataGpu, _dropoutMask._dataGpu, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return yG;
@@ -998,6 +1007,7 @@ namespace ff
 
 	const CudaTensor* SoftmaxLayer::Forward(const CudaTensor* x)
 	{
+		assert(1 == x->_d2 && 1 == x->_d3);
 		_softmax.ResetTensor(x->_d0, x->_d1);
 
 #if 1
@@ -1035,14 +1045,14 @@ namespace ff
 
 	const CudaTensor* SoftmaxLayer::Backward(const CudaTensor* yG, const int layerIndex)
 	{
-		assert(yG->_d0 == _softmax._d1);
+		assert(yG->_d0 == yG->_dataSize && yG->_d0 == _softmax._d1);
 		_lossG.ResetTensor(_softmax._d0, _softmax._d1);
 		if (layerIndex > 0)
 		{
 			int nJobs = _lossG._d1 * _lossG._d0;
 			int nBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(nBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardSoftmax_Cuda << < block, threads >> > (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0, nJobs);
+			BackwardSoftmax_Cuda <<< block, threads >>> (_lossG._dataGpu, _softmax._dataGpu, yG->_dataGpu, _lossG._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_lossG;
@@ -1062,11 +1072,12 @@ namespace ff
 
 	const CudaTensor* SumOfSquaresLayer::Backward(const CudaTensor* yLabel, const int layerIndex)
 	{
-		_yG.ResetTensor(yLabel->_d0, yLabel->_d1);
+		assert(yLabel->_dataSize == _pY->_dataSize);
+		_yG.ResetTensor(yLabel->_d0, yLabel->_d1, yLabel->_d2, yLabel->_d3);
 
 		if (layerIndex > 0)
 		{
-			int nJobs = _yG._d1 * _yG._d0;
+			int nJobs = _yG._dataSize;
 			int nBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(nBlocks), threads(K_THREAD_PER_BLOCK);
 			BackwardSumOfSqures <<< block, threads >>> (_yG._dataGpu, _pY->_dataGpu, yLabel->_dataGpu, nJobs);

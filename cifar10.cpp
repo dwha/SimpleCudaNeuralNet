@@ -47,8 +47,8 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 	}
 
 	// Data normalization
-	float std[3] = { 63.0f, 62.1f, 66.7f };
-	float mean[3] = { 125.3f, 123.0f, 113.9f };
+	float mean[3] = { 0.4914f, 0.4822f, 0.4465f };
+	float std[3] = { 0.2023f, 0.1994f, 0.2010f };
 
 	int imageCounter = 0;
 	std::vector<unsigned char> raw(kFileBinarySize);
@@ -69,7 +69,7 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 				for (int k = 0; k < kNumBytesPerChannel; ++k)
 				{
 					float val = *pCurr++;
-					images[batchIndex]._data[elementIndex * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + k] = (val - mean[c]) / std[c];
+					images[batchIndex]._data[elementIndex * kNumBytesPerChannel * 3 + c * kNumBytesPerChannel + k] = ((val/255.0f) - mean[c]) / std[c];
 				}
 			}
 			++imageCounter;
@@ -146,19 +146,19 @@ int cifar10()
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 128, 256, 1, 1);
 	nn.AddRelu();
+	//nn.AddConv2d(3, 256, 512, 1, 1);
+	//nn.AddRelu();
+	nn.AddMaxPool();
 	nn.AddConv2d(3, 256, 512, 1, 1);
 	nn.AddRelu();
+	//nn.AddConv2d(3, 512, 512, 1, 1);
+	//nn.AddRelu();
 	nn.AddMaxPool();
-	nn.AddConv2d(3, 512, 512, 1, 1);
+	nn.AddFc(4 * 512, 1024);
 	nn.AddRelu();
-	nn.AddConv2d(3, 512, 512, 1, 1);
-	nn.AddRelu();
-	nn.AddMaxPool();
-	nn.AddFc(4 * 512, 4096);
-	nn.AddRelu();
-	nn.AddFc(4096, 4096);
-	nn.AddRelu();
-	nn.AddFc(4096, 10);
+	nn.AddFc(1024, 10);
+	//nn.AddRelu();
+	//nn.AddFc(4096, 10);
 	nn.AddSoftmax();
 
 	float learningRate = 0.00001f;
@@ -220,7 +220,7 @@ int cifar10()
 			if (stagnancy >= kPatient)
 			{
 				// Learning rate decay
-				learningRate *= kDecayRate;
+				//learningRate *= kDecayRate;
 			}
 			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
 				testCounter,

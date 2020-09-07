@@ -126,6 +126,7 @@ int mnist()
 	LoadMnistData("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", kBatchSize, testImages, testLabels);
 
 #if 1
+	float learningRate = 0.001f;
 	ff::CudaNn nn;
 	nn.AddFc(28 * 28, 1024);
 	nn.AddRelu();
@@ -140,6 +141,8 @@ int mnist()
 	{
 		testImages[i].Reshape(28, 28, 1, testImages[i]._dataSize / (28 * 28));
 	}
+
+	float learningRate = 0.00005f;
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 1, 4, 1, 1);
 	nn.AddRelu();
@@ -147,15 +150,14 @@ int mnist()
 	nn.AddConv2d(3, 4, 16, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();						
-	nn.AddConv2d(3, 16, 64, 1, 1);
+	nn.AddConv2d(3, 16, 32, 1, 1);
 	nn.AddRelu();
-	nn.AddFc(49 * 64, 4096);
+	nn.AddFc(49 * 32, 1024);
 	nn.AddRelu();
-	nn.AddFc(4096, 10);
+	nn.AddFc(1024, 10);
 	nn.AddSoftmax();
 #endif
 
-	float learningRate = 0.001f;
 	printf("* Initial learning rate(%f)\n", learningRate);
 
 	float lowest_loss = 1e8f;
