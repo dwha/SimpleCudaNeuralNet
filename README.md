@@ -1,7 +1,7 @@
 ﻿# SimpleCudaNeuralNet
 This is for studying both neural network and CUDA.
 
-I focused on simplicity and conciseness while coding. It is a self-studying result for better understanding of back-propagation algorithm. It'd be good if this C++ code fragment helps someone who has an interest in deep learning. [cs231n](http://cs231n.stanford.edu/2017/syllabus) from stanford is a good starting point.
+I focused on simplicity and conciseness while coding. It is a self-studying result for better understanding of back-propagation algorithm. It'd be good if this C++ code fragment helps someone who has an interest in deep learning. [CS231n](http://cs231n.stanford.edu/2017/syllabus) from Stanford provides a good starting point to learn deep learning.
 
 ## Status
 #### Weight layers (w/ He initialization)
@@ -31,7 +31,7 @@ After basic components for deep learning implemented, I tried to build a handwri
 #### CIFAR-10 photo classification
 ![Screenshot from 2020-09-07 17-32-32](https://user-images.githubusercontent.com/670560/92366609-5a10dc00-f130-11ea-92f3-fd0244e5e3fe.png)
 
-In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolution neural network for image classification task. It has 9 weight layers. [CIFAR-10](https://www. cs.toronto.edu/~kriz/cifar.html) dataset is used and not augmented for convenience. The model could achieve 44% top-1 error rate after 23 epoches. It took 180 seconds per epoch on my RTX 2070.
+In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolution neural network which has 9 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset is used but not augmented for training the model. It could achieve 44% top-1 error rate after 23 epoches. It took 180 seconds per epoch on my RTX 2070.
 
 #### Notes
 
