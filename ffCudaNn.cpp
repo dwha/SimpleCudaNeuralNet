@@ -13,7 +13,7 @@ namespace ff
 	//static std::default_random_engine g_generator;
 	static std::default_random_engine g_generator(static_cast<int>(std::chrono::steady_clock::now().time_since_epoch().count()));
 	static std::uniform_real_distribution<float> g_uniformDistribution;
-	static std::normal_distribution<float> g_normalDistribution;
+	static std::normal_distribution<float> g_normalDistribution(0.0f, 0.1f);
 
 	CudaTensor::CudaTensor() : _d0(0), _d1(0), _d2(0), _d3(0), _dataSize(0), _dataGpu(nullptr), _dataGpuSize(0)
 	{
@@ -491,7 +491,7 @@ namespace ff
 		CudaLayer(nn), _kernelSize(kernelSize), _stride(stride), _padding(padding)
 	{
 		_w.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
-		_w.SetRandom(1.0f / sqrtf(float(_kernelSize * _kernelSize * nInChannel * 0.5f)));
+		_w.SetRandom(1.0f / sqrtf(float(_kernelSize * _kernelSize * nInChannel * 0.5f))); // He initialization
 		_wG.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
 		_wG_m.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
 		_wG_m.SetZero();

@@ -71,32 +71,7 @@ int simple()
 
 int main()
 {
-#if 0
-	// For debugging
-	ff::CudaTensor x;
-	x.ResetTensor(3, 3);
-	for (int i = 0; i < 9; ++i)
-	{
-		x._data[i] = i * 0.1f;
-	}
-	x.PushToGpu();
-	ff::CudaTensor y;
-	y.ResetTensor(1);
-	y._data[0] = 1;
-	y.PushToGpu();
-	ff::CudaNn nn;
-	nn.AddConv2d(2, 1, 1, 1, 1);
-	nn.AddRelu();
-	nn.AddMaxPool();
-	nn.AddFc(4, 4);
-	nn.AddDropout(0.8f);
-	nn.AddSoftmax();
-	nn.Forward(&x, true);
-	nn.Backward(&y);
-	nn.Pull();
-#endif
-
-	return cifar10();
+	//return cifar10();
 	//return mnist();
-	//return simple();
+	return simple();
 }
