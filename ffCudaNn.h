@@ -167,6 +167,8 @@ namespace ff
 		int	_crossCheck;
 		float _dropoutRate;
 		CudaTensor _dropoutMask;
+		CudaTensor _xDropped;
+		CudaTensor _yGdropped;
 	};
 
 	class SoftmaxLayer : public CudaLayer

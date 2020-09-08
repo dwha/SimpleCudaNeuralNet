@@ -16,8 +16,8 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 * Dropout
 	
 #### Loss
-* Sum of Squares 
-* Softmax
+* Mean squared error
+* Cross entropy loss
 
 #### Optimizer 
 * Adam
@@ -29,13 +29,14 @@ I focused on simplicity and conciseness while coding. It is a self-studying resu
 After basic components for deep learning implemented, I tried to build a handwritten digit recognizer using [MNIST database](http://yann.lecun.com/exdb/mnist/). A simple 2-layer FCNN(1000 hidden unit) could achieve 1.56% Top-1 error rate after 14 epochs which take less than 20 seconds of training time on RTX 2070 graphics card. (See [mnist.cpp](mnist.cpp))
 
 #### CIFAR-10 photo classification
-![Screenshot from 2020-09-07 17-32-32](https://user-images.githubusercontent.com/670560/92366609-5a10dc00-f130-11ea-92f3-fd0244e5e3fe.png)
-
-In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolution network which has 9 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset without augmentation is used to train the model. It could achieve 25% top-1 error rate after 23 epoches. It took 30 seconds per epoch on my RTX 2070.
+In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 9 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset without augmentation is used to train the model. It achieves 30% top-1 error rate after 23 epoches. It took 46 seconds per epoch on my RTX 2070.
 
 #### Notes
-
 Even naive CUDA implementation easily speeds up by 700x more than single-core/no-SIMD CPU version.
 
 Double precision floating point on the CUDA kernels was 3~4x slower than single precision operations.
+
+Training performance is not comparable to PyTorch. PyTorch is much faster (x10~) to train the same model.
+
+Coding this kind of numerical algorithms is treaky. Even hard to figure out if there is a bug or not. Thorough unit test of every functions strongly recommended if you try.
 

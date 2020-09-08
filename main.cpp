@@ -71,7 +71,8 @@ int simple()
 
 int main()
 {
-	/*
+#if 0
+	// For debugging
 	ff::CudaTensor x;
 	x.ResetTensor(3, 3);
 	for (int i = 0; i < 9; ++i)
@@ -87,12 +88,13 @@ int main()
 	nn.AddConv2d(2, 1, 1, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();
-	nn.AddFc(4, 1);
-	nn.Forward(&x);
+	nn.AddFc(4, 4);
+	nn.AddDropout(0.8f);
+	nn.AddSoftmax();
+	nn.Forward(&x, true);
 	nn.Backward(&y);
 	nn.Pull();
-	*/
-
+#endif
 
 	return cifar10();
 	//return mnist();

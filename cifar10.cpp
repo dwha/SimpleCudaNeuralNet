@@ -113,13 +113,13 @@ int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector
 		CheckAccuracy(pSoftmax, labels[i], t1, t3, t5);
 		top1 += t1; top3 += t3; top5 += t5;
 	}
-	loss /= imageCounter;
+	if(imageCounter > 0) loss /= imageCounter;
 	return imageCounter;
 }
 
 int cifar10()
 {
-	const int kBatchSize = 50;
+	const int kBatchSize = 100;
 
 	std::vector<std::string> trainingDataFilenames;
 	trainingDataFilenames.push_back("cifar-10/data_batch_1.bin");
@@ -143,9 +143,9 @@ int cifar10()
 	nn.AddConv2d(3, 32, 64, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();
-	nn.AddConv2d(3, 64, 64, 1, 1);
-	nn.AddRelu();
 	nn.AddConv2d(3, 64, 128, 1, 1);
+	nn.AddRelu();
+	nn.AddConv2d(3, 128, 128, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 128, 256, 1, 1);
@@ -153,105 +153,96 @@ int cifar10()
 	nn.AddConv2d(3, 256, 256, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();
-	nn.AddFc(4 * 256, 2048);
+	nn.AddFc(4 * 256, 1024);
 	nn.AddRelu();
-	nn.AddFc(2048, 10);
+	nn.AddFc(1024, 10);
 	nn.AddSoftmax();
 
-	float learningRate = 0.00001f;
-	float last_validation_loss = 1e8f;
-	float lowest_validation_loss = 1e8f;
-	float last_test_loss = 1e8f;
-	float lowest_test_loss = 1e8f;
+	float learningRate = 0.0001f;
+
 	int stagnancy = 0;
-
-	const size_t numBatch = trainingImages.size();
-	int currValidationDataIndex = 0;
-	int numValidationData = static_cast<int>(numBatch) / 5;
-
-	char buffer[2048];
-	const int numEpoch = 200;
-	for (int i = 0; i < numEpoch; ++i)
+	float last_train_loss = 0.0f;
+	float lowest_train_loss = 1e8f;
+	float last_test_loss = 0.0f;
+	float lowest_test_loss = 1e8f;
+	const int numBatch = (int)trainingImages.size();
+	const int kNumEpoch = 200;
+	for (int i = 0; i < kNumEpoch; ++i)
 	{
 		float currLearningRate = learningRate;
 
 		// gradual decay
-		const float kDecay = 0.1f;
-		const int kCooldown = 10;
+		//const float kDecay = 0.2f;
+		//const int kCooldown = 3;
 		//if (i >= kCooldown)
 		//{
 		//	currLearningRate *= expf(-1.0f * kDecay * (i - kCooldown));
 		//}
 
+		char buffer[2048];
 		sprintf(buffer, "-- Epoch %03d(lr: %f)", i + 1, currLearningRate);
 		ProfileScope __m(buffer);
 
 		// Training
-		for (size_t j = 0; j < numBatch; ++j)
+		int trainingImageCounter = 0;
+		float train_loss = 0.0f;
+		int top1 = 0, top3 = 0, top5 = 0;
+		for (int j = 0; j < numBatch; ++j)
 		{
-			if (currValidationDataIndex <= j && j < currValidationDataIndex + numValidationData)
-			{
-				continue; // Exclude validation data from training set
-			}
-
-			nn.Forward(&trainingImages[j], true);
+			const ff::CudaTensor* pSoftmax = nullptr;
+			pSoftmax = nn.Forward(&trainingImages[j], true);
 			nn.Backward(&trainingLabels[j]);
 			nn.UpdateWs(currLearningRate);
-		}
 
-		// Validation loss
+			// train loss
+			const_cast<ff::CudaTensor*>(pSoftmax)->PullFromGpu();
+			for (int k = 0; k < pSoftmax->_d1; ++k)
+			{
+				float val = pSoftmax->_data[static_cast<int>(trainingLabels[j]._data[k]) + pSoftmax->_d0 * k];
+				assert(val > 0.0f);
+				if (val > 0.0f)
+				{
+					++trainingImageCounter;
+					train_loss += -logf(val);
+				}
+			}
+			int t1, t3, t5;
+			CheckAccuracy(pSoftmax, trainingLabels[j], t1, t3, t5);
+			top1 += t1; top3 += t3; top5 += t5;
+		}
+		if (trainingImageCounter <= 0) trainingImageCounter = 1;
+		train_loss /= trainingImageCounter;
+		if (0 == i) last_train_loss = train_loss;
+		if (train_loss < lowest_train_loss)
 		{
-			int top1 = 0, top3 = 0, top5 = 0;
-			float loss = 0.0f;
-			int testCounter = ComputeLoss(nn, trainingImages, trainingLabels, currValidationDataIndex, currValidationDataIndex + numValidationData,
-				loss, top1, top3, top5);
-			if (0 == i) last_validation_loss = loss;
-			++stagnancy;
-			if (loss < lowest_validation_loss)
-			{
-				lowest_validation_loss = loss;
-				stagnancy = 0;
-			}
-			const int kPatient = 2;
-			const float kDecayRate = 0.5f;
-			if (stagnancy >= kPatient)
-			{
-				// Learning rate decay
-				//learningRate *= kDecayRate;
-			}
-			printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
-				testCounter,
-				loss, loss - last_validation_loss, lowest_validation_loss,
-				top1,
-				top3,
-				top5);
-			last_validation_loss = loss;
-
-			// Rotate validation set
-			currValidationDataIndex += numValidationData;
-			if (currValidationDataIndex + numValidationData > numBatch)
-			{
-				currValidationDataIndex = 0;
-			}
+			lowest_train_loss = train_loss;
 		}
+		printf("Train[%05d](Loss: %f(%+f)/%f, Top1: %05d(%5.2f%%), Top3: %05d, Top5: %05d)\n",
+			trainingImageCounter,
+			train_loss, train_loss - last_train_loss, lowest_train_loss,
+			top1, top1 * 100.0f / trainingImageCounter,
+			top3,
+			top5);
+		last_train_loss = train_loss;
 
 		// Test loss
 		{
 			int top1 = 0, top3 = 0, top5 = 0;
-			float loss = 0.0f;
-			int testCounter = ComputeLoss(nn, testImages, testLabels, 0, (int)testImages.size(), loss, top1, top3, top5);
-			if (0 == i) last_test_loss = loss;
-			if (loss < lowest_test_loss)
+			float test_loss = 0.0f;
+			int testCounter = ComputeLoss(nn, testImages, testLabels, 0, (int)testImages.size(), test_loss, top1, top3, top5);
+			if (testCounter <= 0)  testCounter = 1;
+			if (0 == i) last_test_loss = test_loss;
+			if (test_loss < lowest_test_loss)
 			{
-				lowest_test_loss = loss;
+				lowest_test_loss = test_loss;
 			}
-			printf("Test[%05d](Loss: %f(%+f)/%f, Top1: %05d, Top3: %05d, Top5: %05d)\n",
+			printf("Test_[%05d](Loss: %f(%+f)/%f, Top1: %05d(%5.2f%%), Top3: %05d, Top5: %05d)\n",
 				testCounter,
-				loss, loss - last_test_loss, lowest_test_loss,
-				top1,
+				test_loss, test_loss - last_test_loss, lowest_test_loss,
+				top1, top1 * 100.0f / testCounter,
 				top3,
 				top5);
-			last_test_loss = loss;
+			last_test_loss = test_loss;
 		}
 	}
 	return 0;
