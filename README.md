@@ -31,7 +31,7 @@ After basic components for deep learning implemented, I built a handwritten digi
 ### CIFAR-10 photo classification
 ![Screenshot from 2020-09-08 19-53-50](https://user-images.githubusercontent.com/670560/92467722-0e803000-f20d-11ea-9d20-7c4b828f4ff4.png)
 
-In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 9 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset without augmentation is used to train the model. It achieves 26.5% top-1 error rate after 50 epoches. It took 47 seconds per epoch on my RTX 2070.  If you try a larger model and have enough time to train you can improve it. Data augmentation and batch normalization will be helpful.
+In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 8 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset without augmentation is used to train the model. It achieves 26.5% top-1 error rate after 50 epoches. It took 47 seconds per epoch on my RTX 2070.  If you try a larger model and have enough time to train you can improve it. Data augmentation and batch normalization will be helpful.
 
 ### Notes
 - Even naive CUDA implementation easily speeds up by 700x more than single-core/no-SIMD CPU version.
