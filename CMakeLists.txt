@@ -4,13 +4,13 @@ cmake_minimum_required (VERSION 3.0)
 
 project (SimpleCudaNeuralNet LANGUAGES CXX CUDA)
 
-#set( CMAKE_BUILD_TYPE DEBUG )
-set( CMAKE_BUILD_TYPE RELEASE )
+set( CMAKE_BUILD_TYPE DEBUG )
+#set( CMAKE_BUILD_TYPE RELEASE )
 
 find_package(CUDA REQUIRED)
 
 # -g: for breakpoint debugging in vscode
-set( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wall --std=c++11 -g" )
+set( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wno-unused-result -Wall --std=c++11 -g" )
 set( CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG" )
 set( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DNDEBUG -O3" )
 

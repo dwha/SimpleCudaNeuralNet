@@ -10,7 +10,7 @@ int simple()
 	ff::CudaNn nn;
 	nn.AddFc(1000, 4096);
 	nn.AddFc(4096, 1024);
-	nn.AddDropout(0.5);
+	nn.AddDropout(0.5f);
 	nn.AddRelu();
 	nn.AddFc(1024, 1024);
 	nn.AddRelu();

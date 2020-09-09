@@ -102,28 +102,6 @@ namespace ff
 		assert(err == cudaSuccess);
 	}
 
-	void CudaTensor::WriteOut(int nCol, int nRow, const char* filename)
-	{
-		PullFromGpu();
-		assert(nCol * nRow * 3 <= _dataSize);
-		FILE* fp = fopen(filename, "wt");
-		assert(fp != nullptr);
-		fprintf(fp, "P3\n%d %d\n255\n", nCol, nRow);
-		for (int i = 0; i < nRow; ++i)
-		{
-			for (int j = 0; j < nCol; ++j)
-			{
-				for (int c = 0; c < 3; ++c)
-				{
-					float v = _data[c * nCol * nRow + i * nRow + j];
-					fprintf(fp, "%d ", (int)(v * 255.0f));
-				}
-			}
-			fprintf(fp, "\n");
-		}
-		fclose(fp);
-	}
-
 	///////////////////////////////////////////////////////////////////////
 	__global__ void LinearTransform_Cuda(float* y, const float* x, const float* w, const float* b, int nColX, int nColW, int nJobs)
 	{
@@ -795,7 +773,7 @@ namespace ff
 		_crossCheck = 1;
 		_dropoutMask.ResetTensor(x->_dataSize);
 		_dropoutMask.SetDropoutMask(_dropoutRate);
-		_xDropped.ResetTensor(x->_dataSize);
+		_xDropped.ResetTensor(x->_d0, x->_d1, x->_d2, x->_d3);
 
 		int nJobs = _xDropped._dataSize;
 		int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;

@@ -33,8 +33,6 @@ namespace ff
 
 		void PullFromGpu();
 
-		void WriteOut(int nCol, int nRow, const char* filename);
-
 	public:
 		int _d0, _d1, _d2, _d3, _dataSize;
 		std::vector<float> _data;

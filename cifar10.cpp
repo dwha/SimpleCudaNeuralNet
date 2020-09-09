@@ -160,7 +160,6 @@ int cifar10()
 
 	float learningRate = 0.0001f;
 
-	int stagnancy = 0;
 	float last_train_loss = 0.0f;
 	float lowest_train_loss = 1e8f;
 	float last_test_loss = 0.0f;
