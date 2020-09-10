@@ -11,7 +11,8 @@ namespace ff
 {
 	///////////////////////////////////////////////////////////////////////
 	//static std::default_random_engine g_generator;
-	static std::default_random_engine g_generator(static_cast<int>(std::chrono::steady_clock::now().time_since_epoch().count()));
+	static std::default_random_engine g_generator(
+			static_cast<int>(std::chrono::steady_clock::now().time_since_epoch().count()));
 	static std::uniform_real_distribution<float> g_uniformDistribution;
 	static std::normal_distribution<float> g_normalDistribution(0.0f, 0.1f);
 
@@ -65,8 +66,8 @@ namespace ff
 	{
 		for (int i = 0; i < _dataSize; ++i)
 		{
-			_data[i] = g_normalDistribution(g_generator) * multiplier;
-			//_data[i] = (g_uniformDistribution(g_generator) * 2.0f - 1.0f) * multiplier;
+			//_data[i] = g_normalDistribution(g_generator) * multiplier;
+			_data[i] = (g_uniformDistribution(g_generator) * 2.0f - 1.0f) * multiplier;
 		}
 		PushToGpu();
 	}
@@ -188,16 +189,18 @@ namespace ff
 		float val = 0.0f;
 		int startRowX = rowY * stride - padding;
 		int startColX = colY * stride - padding;
-		for (int inChannel = 0; inChannel < nInChannel; ++inChannel)
+		int startRowKernel= max(0, padding - (rowY * stride));
+		int startColKernel = max(0, padding - (colY * stride));
+		for (int rowX = startRowX + startRowKernel; rowX < startRowX + kernelSize; ++rowX)
 		{
-			for (int rowX = startRowX; rowX < startRowX + kernelSize; ++rowX)
+			if (rowX >= nRowX) break;
+			for (int colX = startColX + startColKernel; colX < startColX + kernelSize; ++colX)
 			{
-				if (rowX < 0 || rowX >= nRowX) continue;
-				int xBaseIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX;
-				int wBaseIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + (rowX - startRowX) * kernelSize;
-				for (int colX = startColX; colX < startColX + kernelSize; ++colX)
+				if (colX >= nColX) break;
+				for (int inChannel = 0; inChannel < nInChannel; ++inChannel)
 				{
-					if (colX < 0 || colX >= nColX) continue;
+					int xBaseIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX;
+					int wBaseIndex = outChannel * (nInChannel * kernelSize * kernelSize) + inChannel * (kernelSize * kernelSize) + (rowX - startRowX) * kernelSize;
 					val += x[xBaseIndex + colX] * w[wBaseIndex + (colX - startColX)];
 				}
 			}
@@ -223,18 +226,22 @@ namespace ff
 		int colW = index % kernelSize;
 
 		float val = 0.0f;
+		int startRowY = max(int(ceil((padding - rowW) / float(stride))), 0);
+		int startColY = max(int(ceil((padding - colW) / float(stride))), 0);
 		for (int image = 0; image < nImages; ++image)
 		{
-			for (int rowY = 0; rowY < nRowY; ++rowY)
+			int yBaseIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY);
+			int xBaseIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX);
+			for (int rowY = startRowY; rowY < nRowY; ++rowY)
 			{
 				int rowX = rowY * stride - padding + rowW;
-				if (rowX < 0 || rowX >= nRowX) continue;
-				for (int colY = 0; colY < nColY; ++colY)
+				if (rowX >= nRowX) break;
+				for (int colY = startColY; colY < nColY; ++colY)
 				{
 					int colX = colY * stride - padding + colW;
-					if (colX < 0 || colX >= nColX) continue;
-					int yIndex = image * (nOutChannel * nRowY * nColY) + outChannel * (nRowY * nColY) + rowY * nColY + colY;
-					int xIndex = image * (nInChannel * nRowX * nColX) + inChannel * (nRowX * nColX) + rowX * nColX + colX;
+					if (colX >= nColX) break;
+					int yIndex = yBaseIndex + rowY * nColY + colY;
+					int xIndex = xBaseIndex + rowX * nColX + colX;
 					val += x[xIndex] * yG[yIndex];
 				}
 			}
@@ -266,7 +273,7 @@ namespace ff
 
 	__global__ void BackwardConv2d_Xg_Cuda(
 		float* xG, const float* w, const float* yG,
-		int nImages, int nInChannel, int nRowX, int nColX, 
+		int nImages, int nInChannel, int nRowX, int nColX,
 		int nOutChannel, int nRowY, int nColY,
 		int kernelSize, int stride, int padding, int nJobs)
 	{
@@ -283,17 +290,17 @@ namespace ff
 
 		float val = 0.0f;
 		// Note(dongwook): Iterate all y's which use the current x
-		for (int rowY = 0; rowY < nRowY; ++rowY)
+		int startRowY = max(0, int(floor(float(rowX + padding - kernelSize) / stride)) + 1);
+		int startColY = max(0, int(floor(float(colX + padding - kernelSize) / stride)) + 1);
+		for (int rowY = startRowY; rowY < nRowY; ++rowY)
 		{
 			int upperX = rowY * stride - padding;
 			if (rowX < upperX) break;
-			if (upperX + kernelSize <= rowX) continue;
 			int rowW = rowX - upperX;
-			for (int colY = 0; colY < nColY; ++colY)
+			for (int colY = startColY; colY < nColY; ++colY)
 			{
 				int leftX = colY * stride - padding;
 				if (colX < leftX) break;
-				if (leftX + kernelSize <= colX) continue;
 				int colW = colX - leftX;
 				for (int outChannel = 0; outChannel < nOutChannel; ++outChannel)
 				{
@@ -360,7 +367,6 @@ namespace ff
 		if (nRow <= r) return;
 
 		int baseIndex = r * nCol;
-#if 0
 		float maxValue = x[baseIndex];
 		for (int i = 1; i < nCol; ++i)
 		{
@@ -375,17 +381,6 @@ namespace ff
 		{
 			softmax[baseIndex + i] = expf(x[baseIndex + i] - maxValue) / sum;
 		}
-#else
-		float sum = 0.0f;
-		for (int i = 0; i < nCol; ++i)
-		{
-			sum += expf(x[baseIndex + i]);
-		}
-		for (int i = 0; i < nCol; ++i)
-		{
-			softmax[baseIndex + i] = expf(x[baseIndex + i]) / sum;
-		}
-#endif
 	}
 
 	__global__ void BackwardSoftmax_Cuda(float* lossG, const float* softmax, const float* yLabel, int nCol, int nJobs)
@@ -469,14 +464,14 @@ namespace ff
 		CudaLayer(nn), _kernelSize(kernelSize), _stride(stride), _padding(padding)
 	{
 		_w.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
-		_w.SetRandom(1.0f / sqrtf(float(_kernelSize * _kernelSize * nInChannel * 0.5f))); // He initialization
+		_w.SetRandom(1.0f / sqrtf(float(_kernelSize * _kernelSize * nInChannel)));
 		_wG.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
 		_wG_m.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
 		_wG_m.SetZero();
 		_wG_v.ResetTensor(_kernelSize, _kernelSize, nInChannel, nOutChannel);
 		_wG_v.SetZero();
 		_b.ResetTensor(nOutChannel);
-		_b.SetZero();
+		_b.SetRandom(1.0f / sqrtf(float(_kernelSize * _kernelSize * nInChannel)));
 		_bG.ResetTensor(nOutChannel);
 		_bG_m.ResetTensor(nOutChannel);
 		_bG_m.SetZero();
@@ -581,15 +576,14 @@ namespace ff
 	FcLayer::FcLayer(CudaNn* nn, int inDim, int outDim) : CudaLayer(nn), _pX(nullptr)
 	{
 		_w.ResetTensor(outDim, inDim);
-		//_w.Random(1.0 / sqrtf(inDim)); // Xavier initialization
-		_w.SetRandom(1.0f / sqrtf(inDim * 0.5f)); // He initialization
+		_w.SetRandom(1.0f / sqrtf(inDim));
 		_wG.ResetTensor(outDim, inDim);
 		_wG_m.ResetTensor(outDim, inDim);
 		_wG_m.SetZero();
 		_wG_v.ResetTensor(outDim, inDim);
 		_wG_v.SetZero();
 		_b.ResetTensor(outDim);
-		_b.SetZero();
+		_b.SetRandom(1.0f / sqrtf(inDim));
 		_bG.ResetTensor(outDim);
 		_bG_m.ResetTensor(outDim);
 		_bG_m.SetZero();

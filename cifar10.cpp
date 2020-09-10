@@ -69,8 +69,8 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 				for (int k = 0; k < kNumBytesPerChannel; ++k)
 				{
 					float val = *pCurr++;
-					images[batchIndex]._data[elementIndex * kNumBytesPerChannel * kNumChannel + c * kNumBytesPerChannel + k] =
-						((val/255.0f) - mean[c]) / std[c];
+					int index = elementIndex * kNumBytesPerChannel * kNumChannel + c * kNumBytesPerChannel + k;
+					images[batchIndex]._data[index] = ((val/255.0f) - mean[c]) / std[c];
 				}
 			}
 			++imageCounter;
@@ -136,6 +136,7 @@ int cifar10()
 	std::vector<ff::CudaTensor> testLabels;
 	LoadCifar10(kBatchSize, 10000, testDataFilenames, testImages, testLabels);
 
+#if 1
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 3, 32, 1, 1);
 	nn.AddRelu();
@@ -157,6 +158,38 @@ int cifar10()
 	nn.AddRelu();
 	nn.AddFc(1024, 10);
 	nn.AddSoftmax();
+#else
+	ff::CudaNn nn;
+	nn.AddConv2d(3, 3, 64, 1, 1);
+	nn.AddRelu();
+	nn.AddConv2d(3, 64, 64, 1, 1);
+	nn.AddRelu();
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 64, 128, 1, 1);
+	nn.AddRelu();
+	nn.AddConv2d(3, 128, 128, 1, 1);
+	nn.AddRelu();
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 128, 256, 1, 1);
+	nn.AddRelu();
+	nn.AddConv2d(3, 256, 256, 1, 1);
+	nn.AddRelu();
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 256, 512, 1, 1);
+	nn.AddRelu();
+	nn.AddConv2d(3, 512, 512, 1, 1);
+	nn.AddRelu();
+	nn.AddMaxPool();
+	nn.AddConv2d(3, 512, 512, 1, 1);
+	nn.AddRelu();
+	nn.AddConv2d(3, 512, 512, 1, 1);
+	nn.AddRelu();
+	nn.AddMaxPool();
+	nn.AddFc(1 * 512, 1024);
+	nn.AddRelu();
+	nn.AddFc(1024, 10);
+	nn.AddSoftmax();
+#endif
 
 	float learningRate = 0.0001f;
 
