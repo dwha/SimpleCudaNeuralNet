@@ -500,7 +500,7 @@ namespace ff
 			int nJobs = _wG._dataSize;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardConv2d_Wg_Cuda <<<blocks, threads>>> (
+			BackwardConv2d_Wg_Cuda <<<blocks, threads >>> (
 				_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu,
 				_wG._d3, _wG._d2,
 				_y._d3, _y._d1, _y._d0, _pX->_d1, _pX->_d0,
@@ -864,13 +864,14 @@ namespace ff
 		int ch = blockIdx.x;
 		int image = threadIdx.x;
 
-		__shared__ float meanArr[BLOCK_SIZE];
-		meanArr[image] = 0.0f;
 		int mDash = nImages * nRow * nCol;
 		int imageStride = nChannel * nRow * nCol;
 		int channelStride = nRow * nCol;
 		int currChBaseIndex = ch * channelStride;
 		int baseIndex = image * imageStride + currChBaseIndex;
+
+		__shared__ float meanArr[BLOCK_SIZE];
+		meanArr[image] = 0.0f;
 		for (int i = 0; i < channelStride; ++i)
 		{
 			meanArr[image] += x[baseIndex + i];
@@ -900,10 +901,13 @@ namespace ff
 
 		float alpha = w[ch * 2 + 0];
 		float beta = w[ch * 2 + 1];
-		meanAndVariance[ch * 2 + 0] = mean;
-		meanAndVariance[ch * 2 + 1] = variance;
-		meanAndVarianceAcc[(ch + 1) * 2 + 0] += mean;
-		meanAndVarianceAcc[(ch + 1) * 2 + 1] += variance;
+		if (threadIdx.x == 0)
+		{
+			meanAndVariance[ch * 2 + 0] = mean;
+			meanAndVariance[ch * 2 + 1] = variance;
+			meanAndVarianceAcc[(ch + 1) * 2 + 0] += mean;
+			meanAndVarianceAcc[(ch + 1) * 2 + 1] += variance;
+		}
 		float d = rsqrtf(variance + 1e-8f);
 		for (int i = 0; i < channelStride; ++i)
 		{
@@ -947,8 +951,7 @@ namespace ff
 
 		if (_nn->IsTraining())
 		{
-			++_accCount;
-			if (_accCount <= 24)
+			if (++_accCount <= 24)
 			{
 				ForwardBatchNorm2d_Train_0_Cuda <<< 1, 1 >>> (_meanAndVarianceAcc._dataGpu);
 			}

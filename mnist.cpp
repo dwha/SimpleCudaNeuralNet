@@ -125,7 +125,7 @@ int mnist()
 	LoadMnistData("mnist/train-images.idx3-ubyte", "mnist/train-labels.idx1-ubyte", kBatchSize, trainingImages, trainingLabels);
 	LoadMnistData("mnist/t10k-images.idx3-ubyte", "mnist/t10k-labels.idx1-ubyte", kBatchSize, testImages, testLabels);
 
-#if 0
+#if 1
 	float learningRate = 0.001f;
 	ff::CudaNn nn;
 	nn.AddFc(28 * 28, 2048);
@@ -142,7 +142,7 @@ int mnist()
 		testImages[i].Reshape(28, 28, 1, testImages[i]._dataSize / (28 * 28));
 	}
 
-	float learningRate = 0.0001f;
+	float learningRate = 0.001f;
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 1, 4, 1, 1);
 	nn.AddBatchNorm2d(4);

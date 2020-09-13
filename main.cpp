@@ -7,6 +7,7 @@ int cifar10();
 int simple()
 {
 #if 1
+	float learningRate = 0.01f;
 	ff::CudaNn nn;
 	nn.AddFc(1000, 4096);
 	nn.AddFc(4096, 1024);
@@ -22,6 +23,7 @@ int simple()
 	x.SetRandom();
 	y.SetRandom();
 #else
+	float learningRate = 0.001f;
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 1, 8, 1, 1);		// 8 * 8 * 8
 	nn.AddRelu();
@@ -39,7 +41,6 @@ int simple()
 	y.SetRandom();
 #endif
 
-	float learningRate = 0.0001f;
 	const ff::CudaTensor* yPred = nullptr;
 	for (int i = 0; i < 10000; ++i)
 	{

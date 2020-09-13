@@ -193,12 +193,12 @@ int cifar10()
 	trainingDataFilenames.push_back("cifar-10/data_batch_5.bin");
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
-	LoadCifar10(kBatchSize, 50000, false, trainingDataFilenames, trainingImages, trainingLabels);
+	LoadCifar10(kBatchSize, 5000, false, trainingDataFilenames, trainingImages, trainingLabels);
 	std::vector<std::string> testDataFilenames;
 	testDataFilenames.push_back("cifar-10/test_batch.bin");
 	std::vector<ff::CudaTensor> testImages;
 	std::vector<ff::CudaTensor> testLabels;
-	LoadCifar10(kBatchSize, 10000, false, testDataFilenames, testImages, testLabels);
+	LoadCifar10(kBatchSize, 1000, false, testDataFilenames, testImages, testLabels);
 
 #if 1
 	ff::CudaNn nn;
