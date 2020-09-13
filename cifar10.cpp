@@ -25,7 +25,25 @@ public:
 
 void CheckAccuracy(const ff::CudaTensor* pSoftmax, const ff::CudaTensor& yLabel, int& top1, int& top3, int& top5);
 
-void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& filenames, std::vector<ff::CudaTensor>& images, std::vector<ff::CudaTensor>& labels)
+float Bilinear(int nRow, int nCol, const float* srcImage, float u, float v)
+{
+	assert(u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f);
+	float c = u * nCol;
+	int c0 = (int)c;
+	float alpha = c - c0;
+	int c1 = c0 >= nCol ? c0 : c0 + 1;
+
+	float r = v * nRow;
+	int r0 = (int)r;
+	float beta = r - r0;
+	int r1 = r0 >= nRow ? r0 : r0 + 1;
+
+	float v0 = (1.0f - alpha) * srcImage[r0 * nCol + c0] + alpha * srcImage[r0 * nCol + c1];
+	float v1 = (1.0f - alpha) * srcImage[r1 * nCol + c0] + alpha * srcImage[r1 * nCol + c1];
+	return (1.0f - beta) * v0 + beta * v1;
+}
+
+void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<std::string>& filenames, std::vector<ff::CudaTensor>& images, std::vector<ff::CudaTensor>& labels)
 {
 	const int kFileBinarySize = 30730000;
 	const int kNumImagePerFile = 10000;
@@ -52,6 +70,7 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 
 	int imageCounter = 0;
 	std::vector<unsigned char> raw(kFileBinarySize);
+	std::vector<float> buffer;
 	for (int i = 0; i < numFiles; ++i)
 	{
 		unsigned char* pCurr = &raw[0];
@@ -61,16 +80,61 @@ void LoadCifar10(int batchSize, int maxImages, const std::vector<std::string>& f
 		fclose(fp);
 		for (int j = 0; j < kNumImagePerFile; ++j)
 		{
+			bool bFlip = false;
+			if (true == augment && 1 == rand() % 2) bFlip = true;
 			int batchIndex = imageCounter / batchSize;
 			int elementIndex = imageCounter % batchSize;
 			labels[batchIndex]._data[elementIndex] = static_cast<float>(*pCurr++);
-			for (int c = 0; c < kNumChannel; ++c)
+			for (int ch = 0; ch < kNumChannel; ++ch)
 			{
-				for (int k = 0; k < kNumBytesPerChannel; ++k)
+				for (int row = 0; row < 32; ++row)
 				{
-					float val = *pCurr++;
-					int index = elementIndex * kNumBytesPerChannel * kNumChannel + c * kNumBytesPerChannel + k;
-					images[batchIndex]._data[index] = ((val/255.0f) - mean[c]) / std[c];
+					for (int col = 0; col < 32; ++col)
+					{
+						float val = *pCurr++;
+						int index = elementIndex * kNumBytesPerChannel * kNumChannel + ch * kNumBytesPerChannel;
+						if (true == bFlip)
+						{
+							index += (row * 32 + (31 - col));
+						}
+						else
+						{
+							index += (row * 32 + col);
+						}
+						images[batchIndex]._data[index] = ((val / 255.0f) - mean[ch]) / std[ch];
+					}
+				}
+			}
+			if (true == augment)
+			{
+				int shift = 8;
+				int newSize = 32 + shift;
+				int baseIndex = elementIndex * kNumBytesPerChannel * kNumChannel;
+				buffer.resize(newSize * newSize * kNumChannel);
+				for (int ch = 0; ch < kNumChannel; ++ch)
+				{
+					for (int row = 0; row < newSize; ++row)
+					{
+						for (int col = 0; col < newSize; ++col)
+						{
+							buffer[ch * newSize * newSize + row * newSize + col] =
+								Bilinear(32, 32, &images[batchIndex]._data[baseIndex + ch * kNumBytesPerChannel],
+									static_cast<float>(col) / newSize, static_cast<float>(row) / newSize);
+						}
+					}
+				}
+				int rowShift = static_cast<int>(rand() % (shift+1));
+				int colShift = static_cast<int>(rand() % (shift+1));
+				for (int ch = 0; ch < kNumChannel; ++ch)
+				{
+					for (int row = 0; row < 32; ++row)
+					{
+						for (int col = 0; col < 32; ++col)
+						{
+							images[batchIndex]._data[baseIndex + ch * kNumBytesPerChannel + row * 32 + col] =
+								buffer[ch * newSize * newSize + (row + rowShift) * newSize + (col + colShift)];
+						}
+					}
 				}
 			}
 			++imageCounter;
@@ -129,29 +193,35 @@ int cifar10()
 	trainingDataFilenames.push_back("cifar-10/data_batch_5.bin");
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
-	LoadCifar10(kBatchSize, 50000, trainingDataFilenames, trainingImages, trainingLabels);
+	LoadCifar10(kBatchSize, 50000, false, trainingDataFilenames, trainingImages, trainingLabels);
 	std::vector<std::string> testDataFilenames;
 	testDataFilenames.push_back("cifar-10/test_batch.bin");
 	std::vector<ff::CudaTensor> testImages;
 	std::vector<ff::CudaTensor> testLabels;
-	LoadCifar10(kBatchSize, 10000, testDataFilenames, testImages, testLabels);
+	LoadCifar10(kBatchSize, 10000, false, testDataFilenames, testImages, testLabels);
 
 #if 1
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 3, 32, 1, 1);
+	nn.AddBatchNorm2d(32);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 32, 64, 1, 1);
+	nn.AddBatchNorm2d(64);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 64, 128, 1, 1);
+	nn.AddBatchNorm2d(128);
 	nn.AddRelu();
 	nn.AddConv2d(3, 128, 128, 1, 1);
+	nn.AddBatchNorm2d(128);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 128, 256, 1, 1);
+	nn.AddBatchNorm2d(256);
 	nn.AddRelu();
 	nn.AddConv2d(3, 256, 256, 1, 1);
+	nn.AddBatchNorm2d(256);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddFc(4 * 256, 1024);
@@ -161,28 +231,38 @@ int cifar10()
 #else
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 3, 64, 1, 1);
+	nn.AddBatchNorm2d(64);
 	nn.AddRelu();
 	nn.AddConv2d(3, 64, 64, 1, 1);
+	nn.AddBatchNorm2d(64);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 64, 128, 1, 1);
+	nn.AddBatchNorm2d(128);
 	nn.AddRelu();
 	nn.AddConv2d(3, 128, 128, 1, 1);
+	nn.AddBatchNorm2d(128);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 128, 256, 1, 1);
+	nn.AddBatchNorm2d(256);
 	nn.AddRelu();
 	nn.AddConv2d(3, 256, 256, 1, 1);
+	nn.AddBatchNorm2d(256);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 256, 512, 1, 1);
+	nn.AddBatchNorm2d(512);
 	nn.AddRelu();
 	nn.AddConv2d(3, 512, 512, 1, 1);
+	nn.AddBatchNorm2d(512);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddConv2d(3, 512, 512, 1, 1);
+	nn.AddBatchNorm2d(512);
 	nn.AddRelu();
 	nn.AddConv2d(3, 512, 512, 1, 1);
+	nn.AddBatchNorm2d(512);
 	nn.AddRelu();
 	nn.AddMaxPool();
 	nn.AddFc(1 * 512, 1024);
@@ -191,7 +271,7 @@ int cifar10()
 	nn.AddSoftmax();
 #endif
 
-	float learningRate = 0.0001f;
+	float learningRate = 0.001f;
 
 	float last_train_loss = 0.0f;
 	float lowest_train_loss = 1e8f;

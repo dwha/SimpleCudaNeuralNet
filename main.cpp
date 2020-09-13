@@ -71,7 +71,7 @@ int simple()
 
 int main()
 {
-	//return cifar10();
-	return mnist();
+	return cifar10();
+	//return mnist();
 	//return simple();
 }

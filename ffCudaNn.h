@@ -60,52 +60,6 @@ namespace ff
 		CudaNn* _nn;
 	};
 
-	class Conv2Layer : public CudaLayer
-	{
-	public:
-		Conv2Layer(CudaNn* nn, int kernelSize, int nInChannel, int nOutChannel, int stride, int padding);
-
-		const CudaTensor* Forward(const CudaTensor*) override;
-
-		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
-
-		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
-
-		void Pull() override;
-
-	public:
-		int _kernelSize, _stride, _padding;
-		const CudaTensor* _pX;
-		CudaTensor _xG;
-		CudaTensor _w;
-		CudaTensor _wG;
-		CudaTensor _wG_m;
-		CudaTensor _wG_v;
-		CudaTensor _b;
-		CudaTensor _bG;
-		CudaTensor _bG_m;
-		CudaTensor _bG_v;
-		CudaTensor _y;
-	};
-
-	class MaxPoolLayer : public CudaLayer
-	{
-	public:
-		MaxPoolLayer(CudaNn* nn) : CudaLayer(nn) {}
-
-		const CudaTensor* Forward(const CudaTensor*) override;
-
-		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
-
-		void Pull() override;
-
-	public:
-		const CudaTensor* _pX;
-		CudaTensor _maxIndex;
-		CudaTensor _xG;
-		CudaTensor _y;
-	};
-
 	class FcLayer : public CudaLayer
 	{
 	public:
@@ -120,6 +74,34 @@ namespace ff
 		void Pull() override;
 
 	public:
+		const CudaTensor* _pX;
+		CudaTensor _xG;
+		CudaTensor _w;
+		CudaTensor _wG;
+		CudaTensor _wG_m;
+		CudaTensor _wG_v;
+		CudaTensor _b;
+		CudaTensor _bG;
+		CudaTensor _bG_m;
+		CudaTensor _bG_v;
+		CudaTensor _y;
+	};
+
+	class Conv2dLayer : public CudaLayer
+	{
+	public:
+		Conv2dLayer(CudaNn* nn, int kernelSize, int nInChannel, int nOutChannel, int stride, int padding);
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
+
+		void Pull() override;
+
+	public:
+		int _kernelSize, _stride, _padding;
 		const CudaTensor* _pX;
 		CudaTensor _xG;
 		CudaTensor _w;
@@ -148,6 +130,78 @@ namespace ff
 		const CudaTensor* _pX;
 		CudaTensor _xRelu;
 		CudaTensor _xG;
+	};
+
+	class MaxPoolLayer : public CudaLayer
+	{
+	public:
+		MaxPoolLayer(CudaNn* nn) : CudaLayer(nn) {}
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+		void Pull() override;
+
+	public:
+		const CudaTensor* _pX;
+		CudaTensor _maxIndex;
+		CudaTensor _xG;
+		CudaTensor _y;
+	};
+
+	class BatchNorm1dLayer : public CudaLayer
+	{
+	public:
+		BatchNorm1dLayer(CudaNn* nn, int inDim);
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
+
+		void Pull() override;
+
+	public:
+		const CudaTensor* _pX;
+		CudaTensor _meanAndVariance;
+		CudaTensor _meanAndVarianceG;
+		CudaTensor _w;
+		CudaTensor _wG;
+		CudaTensor _wG_m;
+		CudaTensor _wG_v;
+		CudaTensor _xG;
+		CudaTensor _y;
+		int _miniBatchCount;
+	};
+
+	class BatchNorm2dLayer : public CudaLayer
+	{
+	public:
+		BatchNorm2dLayer(CudaNn* nn, int inDim);
+
+		const CudaTensor* Forward(const CudaTensor*) override;
+
+		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
+
+		void Pull() override;
+
+	public:
+		const CudaTensor* _pX;
+		CudaTensor _meanAndVariance;
+		CudaTensor _meanAndVarianceAcc;
+		CudaTensor _meanAndVarianceG;
+		CudaTensor _w;
+		CudaTensor _wG;
+		CudaTensor _wG_m;
+		CudaTensor _wG_v;
+		CudaTensor _xG;
+		CudaTensor _xHat;
+		CudaTensor _y;
+		int _accCount;
 	};
 
 	class DropoutLayer : public CudaLayer
@@ -218,19 +272,23 @@ namespace ff
 
 		bool AddRelu();
 
+		bool AddBatchNorm1d(int inDim);
+
+		bool AddBatchNorm2d(int inDim);
+
 		bool AddDropout(float dropoutRatio);
 
 		bool AddSoftmax();
 
 		bool AddSumOfSquares();
 
-		const CudaTensor* Forward(const CudaTensor* x, bool dropout = false);
+		const CudaTensor* Forward(const CudaTensor* x, bool train = false);
 
 		void Backward(const CudaTensor* yLabel);
 
 		void UpdateWs(float learningRate);
 
-		bool IsDropoutEnabled() { return _dropoutEnabled; }
+		bool IsTraining() { return _train; }
 
 		void Pull();
 
@@ -245,7 +303,7 @@ namespace ff
 
 		float _beta2t;
 
-		bool _dropoutEnabled;
+		bool _train;
 	};
 
 } // namespace ff
