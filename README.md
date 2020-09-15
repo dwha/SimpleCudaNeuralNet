@@ -25,12 +25,12 @@ I focused on simplicity and conciseness while coding. That means there is no err
 
 ## Result
 ### Handwritten digit recognition
-![ffCudaNn](https://user-images.githubusercontent.com/670560/91796552-735ee780-ec5b-11ea-88fc-0f0a343ce8d6.png)
+![mnist_result](https://user-images.githubusercontent.com/670560/93243500-3cdcad00-f7c3-11ea-985b-5af1117dd0f4.png)
 
 After basic components for deep learning implemented, I built a handwritten digit recognizer using [MNIST database](http://yann.lecun.com/exdb/mnist/). A simple 2-layer FCNN(1000 hidden unit) could achieve 1.56% Top-1 error rate after 14 epochs which take less than 20 seconds of training time on RTX 2070 graphics card. (See [mnist.cpp](mnist.cpp))
 
 ### CIFAR-10 photo classification
-![top1_err_87_67](https://user-images.githubusercontent.com/670560/93242618-0e120700-f7c2-11ea-807a-f3188dcfc092.png)
+![top1_err_87_67](https://user-images.githubusercontent.com/670560/93243007-909ac680-f7c2-11ea-8deb-2abc5704fa29.png)
 
 In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 8 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset is used to train the model. It achieves 12.3% top-1 error rate after 31 epoches. It took 26.5 seconds of training time per epoch on my RTX 2070. If you try a larger model and have enough time to train you can improve it.
 
