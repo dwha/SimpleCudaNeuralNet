@@ -10,9 +10,11 @@ set( CMAKE_BUILD_TYPE DEBUG )
 find_package(CUDA REQUIRED)
 
 # -g: for breakpoint debugging in vscode
-set( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wno-unused-result -Wall --std=c++11 -g" )
+set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result -Wall --std=c++11" )
 set( CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG" )
 set( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DNDEBUG -O3" )
+set( CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -G -pg" )
+set( CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} -dlto" )
 
 message (STATUS "#############################################")
 message (STATUS "SYSTEM_PROCESSOR: " ${CMAKE_SYSTEM_PROCESSOR})
@@ -20,7 +22,6 @@ message (STATUS "SYSTEM_NAME: " ${CMAKE_SYSTEM_NAME})
 message (STATUS "CXX_COMPILER_ID: " ${CMAKE_CXX_COMPILER_ID})
 message (STATUS "CXX_COMPILER: " ${CMAKE_CXX_COMPILER})
 message (STATUS "CUDA_COMPILER: " ${CMAKE_CUDA_COMPILER})
-message (STATUS "BUILD_TYPE: " ${CMAKE_BUILD_TYPE})
 message (STATUS "C_FLAGS: " ${CMAKE_C_FLAGS})
 message (STATUS "CXX_FLAGS: " ${CMAKE_CXX_FLAGS})
 message (STATUS "CXX_FLAGS_DEBUG: " ${CMAKE_CXX_FLAGS_DEBUG})
@@ -28,6 +29,7 @@ message (STATUS "CXX_FLAGS_RELEASE: " ${CMAKE_CXX_FLAGS_RELEASE})
 message (STATUS "CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
 message (STATUS "CUDA_FLAGS_DEBUG: " ${CMAKE_CUDA_FLAGS_DEBUG})
 message (STATUS "CUDA_FLAGS_RELEASE: " ${CMAKE_CUDA_FLAGS_RELEASE})
+message (STATUS "BUILD_TYPE: " ${CMAKE_BUILD_TYPE})
 message (STATUS "#############################################")
 
 include_directories (

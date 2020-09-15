@@ -32,10 +32,10 @@ After basic components for deep learning implemented, I built a handwritten digi
 ### CIFAR-10 photo classification
 ![top1_error_rate](https://user-images.githubusercontent.com/670560/93190845-cddd6500-f77e-11ea-8ef0-6c6fe57c9d53.png)
 
-In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 8 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset is used to train the model. It achieves 16.8% top-1 error rate after 33 epoches. It took 26 seconds of training time per epoch on my RTX 2070. If you try a larger model and have enough time to train you can improve it.
+In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 8 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset is used to train the model. It achieves 16.8% top-1 error rate after 33 epoches. It took 28 seconds of training time per epoch on my RTX 2070. If you try a larger model and have enough time to train you can improve it.
 
 ### Notes
 - Even naive CUDA implementation easily speeds up by 700x more than single-core/no-SIMD CPU version.
 - Double precision floating point on the CUDA kernels was 3~4x slower than single precision operations.
-- Training performance is not comparable to PyTorch. PyTorch is much faster (x10~) to train the same model.
+- Training performance is not comparable to PyTorch. PyTorch is much faster (x7~) to train the same model.
 - Coding this kind of numerical algorithms is tricky and even hard to figure out if there is a bug or not. Thorough unit testing of every functions strongly recommended if you try.

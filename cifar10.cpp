@@ -46,13 +46,15 @@ float Bilinear(int nRow, int nCol, const float* srcImage, float u, float v)
 	assert(u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f);
 	float c = u * nCol;
 	int c0 = (int)c;
+	if(c0 >= nCol) c0 = nCol - 1;
 	float alpha = c - c0;
-	int c1 = c0 >= nCol ? c0 : c0 + 1;
+	int c1 = (c0 + 1 >= nCol ? c0 : c0 + 1);
 
 	float r = v * nRow;
 	int r0 = (int)r;
+	if(r0 >= nRow) r0 = nRow - 1;
 	float beta = r - r0;
-	int r1 = r0 >= nRow ? r0 : r0 + 1;
+	int r1 = (r0 + 1 >= nRow ? r0 : r0 + 1);
 
 	float v0 = (1.0f - alpha) * srcImage[r0 * nCol + c0] + alpha * srcImage[r0 * nCol + c1];
 	float v1 = (1.0f - alpha) * srcImage[r1 * nCol + c0] + alpha * srcImage[r1 * nCol + c1];
@@ -162,6 +164,26 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 						}
 					}
 				}
+				//if(imageCounter == 1826)
+				//{
+				//	char fileNameBuffer[256];
+				//	sprintf(fileNameBuffer, "new_32_32_%05d.ppm", imageCounter);
+				//	FILE* fp = fopen(fileNameBuffer, "wt");
+				//	fprintf(fp, "P3\n32 32\n255\n");
+				//	for (int row = 0; row < 32; ++row)
+				//	{
+				//		for (int col = 0; col < 32; ++col)
+				//		{
+				//			int rgb[3];
+				//			for (int ch = 0; ch < kNumChannel; ++ch)
+				//			{
+				//				rgb[ch] = (int)(images[batchIndex]._data[baseIndex + ch * kNumBytesPerChannel + row * 32 + col] * 255.0f);
+				//			}
+				//			fprintf(fp, "%d %d %d\n", rgb[0], rgb[1], rgb[2]);
+				//		}
+				//	}
+				//	fclose(fp);
+				//}
 			}
 			for (int ch = 0; ch < kNumChannel; ++ch)
 			{
@@ -222,7 +244,7 @@ int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector
 int cifar10()
 {
 	// Note(dongwook): Hyper-parameters
-	const bool augmentDataSet = false;
+	const bool augmentDataSet = true;
 	const int kBatchSize = 100;
 	const int kDataSetScalerInv = 1;
 	float learningRate = 0.001f;
@@ -240,7 +262,7 @@ int cifar10()
 	testDataFilenames.push_back("cifar-10/test_batch.bin");
 	std::vector<ff::CudaTensor> testImages;
 	std::vector<ff::CudaTensor> testLabels;
-	LoadCifar10(kBatchSize, 10000 / kDataSetScalerInv , false, testDataFilenames, testImages, testLabels);
+	LoadCifar10(kBatchSize, 10000 / kDataSetScalerInv, false, testDataFilenames, testImages, testLabels);
 
 #if 1
 	ff::CudaNn nn;
@@ -353,7 +375,7 @@ int cifar10()
 		int validationImageCounter = 0;
 		float validation_loss = 0.0f;
 		int top1 = 0, top3 = 0, top5 = 0;
-		for (int j = 0; j < numBatch / 10; ++j)
+		for (int j = 0; j < numBatch / 5; ++j)
 		{
 			// Note(dongwook): You should call Forward() several times after training if BatchNorm layers exist.
 			//					In the subsequent calls, mean and variance parameters are set to make the network deterministic.
