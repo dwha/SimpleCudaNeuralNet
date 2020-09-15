@@ -109,7 +109,9 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 		for (int j = 0; j < kNumImagePerFile; ++j)
 		{
 			bool bFlip = false;
+			int crop = 0;
 			if (true == augment && 1 == ff::g_generator() % 2) bFlip = true;
+			if (true == augment) crop = ff::g_generator() % 3;
 			int batchIndex = order[imageCounter] / batchSize;
 			int elementIndex = order[imageCounter] % batchSize;
 			labels[batchIndex]._data[elementIndex] = static_cast<float>(*pCurr++);
@@ -134,20 +136,40 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 					}
 				}
 			}
-			if (true == augment)
+			if (crop > 0)
 			{
 				int shift = 8;
 				int newSize = 32 + shift;
-				buffer.resize(newSize * newSize * kNumChannel);
-				for (int ch = 0; ch < kNumChannel; ++ch)
+				if (1 == crop)
 				{
-					for (int row = 0; row < newSize; ++row)
+					buffer.resize(newSize * newSize * kNumChannel);
+					for (int ch = 0; ch < kNumChannel; ++ch)
 					{
-						for (int col = 0; col < newSize; ++col)
+						for (int row = 0; row < newSize; ++row)
 						{
-							buffer[ch * newSize * newSize + row * newSize + col] =
-								Bilinear(32, 32, &images[batchIndex]._data[baseIndex + ch * kNumBytesPerChannel],
-									static_cast<float>(col) / newSize, static_cast<float>(row) / newSize);
+							for (int col = 0; col < newSize; ++col)
+							{
+								buffer[ch * newSize * newSize + row * newSize + col] =
+									Bilinear(32, 32, &images[batchIndex]._data[baseIndex + ch * kNumBytesPerChannel],
+										static_cast<float>(col) / newSize, static_cast<float>(row) / newSize);
+							}
+						}
+					}
+				}
+				else
+				{
+					buffer.clear();
+					buffer.resize(newSize * newSize * kNumChannel, 0.0f);
+					int halfShift = shift / 2;
+					for (int ch = 0; ch < kNumChannel; ++ch)
+					{
+						for (int row = 0; row < 32; ++row)
+						{
+							for (int col = 0; col < 32; ++col)
+							{
+								buffer[ch * newSize * newSize + (row + halfShift) * newSize + (col + halfShift)] =
+									images[batchIndex]._data[baseIndex + ch * kNumBytesPerChannel + row * 32 + col];
+							}
 						}
 					}
 				}
@@ -257,7 +279,10 @@ int cifar10()
 	trainingDataFilenames.push_back("cifar-10/data_batch_5.bin");
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
-	LoadCifar10(kBatchSize, 50000 / kDataSetScalerInv, false, trainingDataFilenames, trainingImages, trainingLabels);
+	if (false == augmentDataSet)
+	{
+		LoadCifar10(kBatchSize, 50000 / kDataSetScalerInv, false, trainingDataFilenames, trainingImages, trainingLabels);
+	}
 	std::vector<std::string> testDataFilenames;
 	testDataFilenames.push_back("cifar-10/test_batch.bin");
 	std::vector<ff::CudaTensor> testImages;
@@ -329,9 +354,11 @@ int cifar10()
 	nn.AddBatchNorm2d(512);
 	nn.AddRelu();
 	nn.AddMaxPool();
-	nn.AddFc(1 * 512, 1024);
+	nn.AddFc(1 * 512, 4096);
 	nn.AddRelu();
-	nn.AddFc(1024, 10);
+	nn.AddFc(4096, 4096);
+	nn.AddRelu();
+	nn.AddFc(4096, 10);
 	nn.AddSoftmax();
 #endif
 
@@ -339,7 +366,7 @@ int cifar10()
 	float lowest_validation_loss = 1e8f;
 	float last_test_loss = 0.0f;
 	float lowest_test_loss = 1e8f;
-	const int kNumEpoch = 100;
+	const int kNumEpoch = 10000;
 	for (int i = 0; i < kNumEpoch; ++i)
 	{
 		float currLearningRate = learningRate;
@@ -352,7 +379,7 @@ int cifar10()
 		//	currLearningRate *= expf(-1.0f * kDecay * (i - kCooldown));
 		//}
 
-		if (true == augmentDataSet && 0 != i)
+		if (true == augmentDataSet)
 		{
 			LoadCifar10(kBatchSize, 50000 / kDataSetScalerInv, true, trainingDataFilenames, trainingImages, trainingLabels);
 		}
