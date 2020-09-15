@@ -7,6 +7,7 @@ I focused on simplicity and conciseness while coding. That means there is no err
 #### Weight layers
 * 2D Convolutional
 * Fully connected
+* Batch normalization
 
 #### Non-linearity
 * Relu
@@ -29,9 +30,9 @@ I focused on simplicity and conciseness while coding. That means there is no err
 After basic components for deep learning implemented, I built a handwritten digit recognizer using [MNIST database](http://yann.lecun.com/exdb/mnist/). A simple 2-layer FCNN(1000 hidden unit) could achieve 1.56% Top-1 error rate after 14 epochs which take less than 20 seconds of training time on RTX 2070 graphics card. (See [mnist.cpp](mnist.cpp))
 
 ### CIFAR-10 photo classification
-![cifar10_cmd](https://user-images.githubusercontent.com/670560/92716821-4ec0e900-f39a-11ea-80f9-88bcad3d9c8b.png)
+![top1_error_rate](https://user-images.githubusercontent.com/670560/93190845-cddd6500-f77e-11ea-8ef0-6c6fe57c9d53.png)
 
-In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 8 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset without augmentation is used to train the model. It achieves 25.9% top-1 error rate after 16 epoches. It took 33 seconds per epoch on my RTX 2070.  If you try a larger model and have enough time to train you can improve it. Data augmentation and batch normalization will be helpful.
+In [cifar10.cpp](cifar10.cpp), you can find a VGG-like convolutional network which has 8 weight layers. [CIFAR-10](https://www.cs.toronto.edu/~kriz/cifar.html) dataset is used to train the model. It achieves 16.8% top-1 error rate after 33 epoches. It took 26 seconds of training time per epoch on my RTX 2070. If you try a larger model and have enough time to train you can improve it.
 
 ### Notes
 - Even naive CUDA implementation easily speeds up by 700x more than single-core/no-SIMD CPU version.

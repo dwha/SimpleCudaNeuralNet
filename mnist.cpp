@@ -145,19 +145,16 @@ int mnist()
 	float learningRate = 0.001f;
 	ff::CudaNn nn;
 	nn.AddConv2d(3, 1, 4, 1, 1);
-	nn.AddBatchNorm2d(4);
 	nn.AddRelu();
 	nn.AddMaxPool();						
-	nn.AddConv2d(3, 4, 16, 1, 1);
-	nn.AddBatchNorm2d(16);
+	nn.AddConv2d(3, 4, 8, 1, 1);
 	nn.AddRelu();
 	nn.AddMaxPool();						
-	nn.AddConv2d(3, 16, 32, 1, 1);
-	nn.AddBatchNorm2d(32);
+	nn.AddConv2d(3, 8, 16, 1, 1);
 	nn.AddRelu();
-	nn.AddFc(49 * 32, 1024);
+	nn.AddFc(7 * 7 * 16, 1000);
 	nn.AddRelu();
-	nn.AddFc(1024, 10);
+	nn.AddFc(1000, 10);
 	nn.AddSoftmax();
 #endif
 

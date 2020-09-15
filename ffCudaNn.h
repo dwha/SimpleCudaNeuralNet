@@ -150,32 +150,6 @@ namespace ff
 		CudaTensor _y;
 	};
 
-	class BatchNorm1dLayer : public CudaLayer
-	{
-	public:
-		BatchNorm1dLayer(CudaNn* nn, int inDim);
-
-		const CudaTensor* Forward(const CudaTensor*) override;
-
-		const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
-
-		void UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t) override;
-
-		void Pull() override;
-
-	public:
-		const CudaTensor* _pX;
-		CudaTensor _meanAndVariance;
-		CudaTensor _meanAndVarianceG;
-		CudaTensor _w;
-		CudaTensor _wG;
-		CudaTensor _wG_m;
-		CudaTensor _wG_v;
-		CudaTensor _xG;
-		CudaTensor _y;
-		int _miniBatchCount;
-	};
-
 	class BatchNorm2dLayer : public CudaLayer
 	{
 	public:
@@ -271,8 +245,6 @@ namespace ff
 		bool AddFc(int inDim, int outDim);
 
 		bool AddRelu();
-
-		bool AddBatchNorm1d(int inDim);
 
 		bool AddBatchNorm2d(int inDim);
 

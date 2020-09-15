@@ -5,14 +5,14 @@
 #include <random>
 #include <chrono>
 
-#define K_THREAD_PER_BLOCK 1024
+#define K_THREAD_PER_BLOCK			512
+#define K_SMALL_THREAD_PER_BLOCK	64 
 
 namespace ff
 {
 	///////////////////////////////////////////////////////////////////////
-	//static std::default_random_engine g_generator;
-	static std::default_random_engine g_generator(
-			static_cast<int>(std::chrono::steady_clock::now().time_since_epoch().count()));
+	//std::default_random_engine g_generator;
+	std::default_random_engine g_generator(static_cast<int>(std::chrono::steady_clock::now().time_since_epoch().count()));
 	static std::uniform_real_distribution<float> g_uniformDistribution;
 	static std::normal_distribution<float> g_normalDistribution(0.0f, 1.0f);
 
@@ -66,7 +66,6 @@ namespace ff
 	{
 		for (int i = 0; i < _dataSize; ++i)
 		{
-			//_data[i] = g_normalDistribution(g_generator) * multiplier;
 			_data[i] = (g_uniformDistribution(g_generator) * 2.0f - 1.0f) * multiplier;
 		}
 		PushToGpu();
@@ -124,7 +123,7 @@ namespace ff
 
 	__global__ void LinearTransform_Cuda(float* y, const float* x, const float* w, const float* b, int nColX, int nColW, int nJobs)
 	{
-		const int yIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		const int yIndex = blockIdx.x * blockDim.x + threadIdx.x;
 		if (yIndex >= nJobs) return;
 		int rowX = yIndex / nColW;
 		int colW = yIndex % nColW;
@@ -180,7 +179,7 @@ namespace ff
 
 	__global__ void BackwardFc_Bg_Cuda(float* bG, const float* yG, int nYgCol, int nYgRow)
 	{
-		const int c = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		const int c = blockIdx.x * blockDim.x + threadIdx.x;
 		if (c >= nYgCol) return;
 
 		float val = 0.0f;
@@ -194,7 +193,7 @@ namespace ff
 
 	__global__ void BackwardFc_Xg_Cuda(float* xG, const float* yG, const float* w, int yGw, int wTh, int xGw, int nJobs)
 	{
-		const int xGindex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		const int xGindex = blockIdx.x * blockDim.x + threadIdx.x;
 		if (xGindex >= nJobs) return;
 		int r = xGindex / xGw;
 		int c = xGindex % xGw;
@@ -253,7 +252,7 @@ namespace ff
 	__global__ void UpdateWs_Cuda(float learningRate, float beta1, float beta2, float beta1t, float beta2t,
 		float* w, const float* wG, float* wG_m, float* wG_v, int nJobs)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		if (index >= nJobs) return;
 
 		// Vanilla
@@ -329,7 +328,7 @@ namespace ff
 		int nInChannel, int nRowX, int nColX,
 		int kernelSize, int stride, int padding, int nJobs)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		if (index >= nJobs) return;
 
 		const int yIndex = index;
@@ -392,7 +391,7 @@ namespace ff
 		int nImages, int nRowY, int nColY, int nRowX, int nColX,
 		int kernelSize, int stride, int padding, int nJobs)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		if (index >= nJobs) return;
 
 		const int wIndex = index;
@@ -430,7 +429,7 @@ namespace ff
 
 	__global__ void BackwardConv2d_Bg_Cuda(float* bG, const float* yG, int nImages, int nOutChannel, int nRowY, int nColY)
 	{
-		const int outChannel = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		const int outChannel = blockIdx.x * blockDim.x + threadIdx.x;
 		if (outChannel >= nOutChannel) return;
 
 		float val = 0.0f;
@@ -455,7 +454,7 @@ namespace ff
 		int nOutChannel, int nRowY, int nColY,
 		int kernelSize, int stride, int padding, int nJobs)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		if (index >= nJobs) return;
 
 		int xIndex = index;
@@ -497,9 +496,10 @@ namespace ff
 		_xG.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
 
 		{
+			assert(_y._d3 <= 256);
 			int nJobs = _wG._dataSize;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 blocks(numBlocks), threads(K_THREAD_PER_BLOCK);
+			int numBlocks = (nJobs + K_SMALL_THREAD_PER_BLOCK - 1) / K_SMALL_THREAD_PER_BLOCK;
+			dim3 blocks(numBlocks), threads(K_SMALL_THREAD_PER_BLOCK);
 			BackwardConv2d_Wg_Cuda <<<blocks, threads >>> (
 				_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu,
 				_wG._d3, _wG._d2,
@@ -563,7 +563,7 @@ namespace ff
 
 	__global__ void ForwardMaxPool_Cuda(float* y, float* maxIndex, const float* x, int nImages, int nInChannel, int nRow, int nCol)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		int nJobs = nImages * nInChannel * nRow * nCol;
 		if (nJobs <= index) return;
 
@@ -621,7 +621,7 @@ namespace ff
 
 	__global__ void BackwardMaxPool_Cuda(float* xG, const float* yG, const float* maxIndex, int nImages, int nOutChannel, int nRow, int nCol)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		int nJobs = nImages * nOutChannel * nRow * nCol;
 		if (nJobs <= index) return;
 
@@ -666,7 +666,7 @@ namespace ff
 
 	__global__ void ForwardRelu_Cuda(float* relu_x, const float* x, int nJobs)
 	{
-		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int jobIndex = blockIdx.x * blockDim.x + threadIdx.x;
 		if (jobIndex >= nJobs) return;
 
 		relu_x[jobIndex] = fmaxf(x[jobIndex], 0.0f);
@@ -686,7 +686,7 @@ namespace ff
 
 	__global__ void BackwardRelu_Cuda(float* xG, const float* yG, const float* x, int nJobs)
 	{
-		int jobIndex = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int jobIndex = blockIdx.x * blockDim.x + threadIdx.x;
 		if (jobIndex >= nJobs) return;
 
 		xG[jobIndex] = x[jobIndex] < 0.0f ? 0.0f : yG[jobIndex];
@@ -712,122 +712,10 @@ namespace ff
 		_xG.PullFromGpu();
 	}
 
-	BatchNorm1dLayer::BatchNorm1dLayer(CudaNn* nn, int inDim) : CudaLayer(nn), _pX(nullptr), _miniBatchCount(0)
-	{
-		_meanAndVariance.ResetTensor(2, inDim);
-		_meanAndVariance.SetZero();
-		_meanAndVarianceG.ResetTensor(2, inDim);
-		_w.ResetTensor(2, inDim);
-		for (int i = 0; i < inDim; ++i)
-		{
-			_w._data[i*2] = 1.0f; // alpha
-			_w._data[i*2+1] = 0.0f; // beta
-		}
-		_w.PushToGpu();
-		_wG.ResetTensor(2, inDim);
-		_wG_m.ResetTensor(2, inDim);
-		_wG_m.SetZero();
-		_wG_v.ResetTensor(2, inDim);
-		_wG_v.SetZero();
-	}
-
-	const CudaTensor* BatchNorm1dLayer::Forward(const CudaTensor* x)
-	{
-		assert(_w._d1 == x->_d0 && 1 == x->_d2 && 1 == x->_d3);
-		_pX = x;
-		_y.ResetTensor(x->_d0, x->_d1, x->_d2, x->_d3);
-
-		if (_nn->IsTraining())
-		{
-			bool accMeanAndVar = true;
-			if (++_miniBatchCount > 10000)
-			{
-				accMeanAndVar = false;
-				_miniBatchCount = 10000;
-			}
-			for (int col = 0; col < x->_d0; ++col)
-			{
-				float mean = 0.0f;
-				float variance = 0.0f;
-				for (int row = 0; row < x->_d1; ++row)
-				{
-					mean += x->_data[row * x->_d0 + col];
-				}
-				mean /= x->_d1;
-				for (int row = 0; row < x->_d1; ++row)
-				{
-					float a = (x->_data[row * x->_d0 + col] - mean);
-					variance += (a * a);
-				}
-				variance /= x->_d1;
-				float alpha = _w._data[col * _w._d0 + 0];
-				float beta = _w._data[col * _w._d0 + 1];
-				if (true == accMeanAndVar)
-				{
-					_meanAndVariance._data[col * _meanAndVariance._d0 + 0] += mean;
-					_meanAndVariance._data[col * _meanAndVariance._d0 + 1] += variance;
-				}
-				for (int row = 0; row < x->_d1; ++row)
-				{
-					float y = (x->_data[row * x->_d0 + col] - mean) / sqrtf(variance + 1e-8f);
-					_y._data[row * _y._d0 + col] = alpha * y + beta;
-				}
-			}
-			return &_y;
-		}
-
-		int accNumBatch = _miniBatchCount <= 0 ? 1 : _miniBatchCount;
-		for (int col = 0; col < x->_d0; ++col)
-		{
-			float alpha = _w._data[col * _w._d0 + 0];
-			float beta = _w._data[col * _w._d0 + 1];
-			float mean = _meanAndVariance._data[col * _meanAndVariance._d0 + 0] / accNumBatch;
-			float variance = _meanAndVariance._data[col * _meanAndVariance._d0 + 1] / accNumBatch;
-			float d = sqrtf(variance + 1e-8f);
-			float a = alpha / d;
-			float b = beta - (alpha * mean) / d;
-			for (int row = 0; row < x->_d1; ++row)
-			{
-				_y._data[row * _y._d0 + col] = a * x->_data[row * x->_d0 + col] + b;
-			}
-		}
-		return &_y;
-	}
-
-	const CudaTensor* BatchNorm1dLayer::Backward(const CudaTensor* yG, const int layerIndex)
-	{
-		_xG.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
-		_meanAndVarianceG.ResetTensor(_meanAndVariance._d0, _meanAndVariance._d1);
-		return &_xG;
-	}
-
-	void BatchNorm1dLayer::UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t)
-	{
-		{
-			int nJobs = _w._d1 * _w._d0;
-			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
-			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			UpdateWs_Cuda << <block, threads >> > (learningRate, beta1, beta2, beta1t, beta2t, _w._dataGpu, _wG._dataGpu, _wG_m._dataGpu, _wG_v._dataGpu, nJobs);
-			assert(cudaGetLastError() == cudaSuccess);
-		}
-	}
-
-	void BatchNorm1dLayer::Pull()
-	{
-		_meanAndVariance.PullFromGpu();
-		_meanAndVarianceG.PullFromGpu();
-		_w.PullFromGpu();
-		_wG.PullFromGpu();
-		_wG_m.PullFromGpu();
-		_wG_v.PullFromGpu();
-		_xG.PullFromGpu();
-		_y.PullFromGpu();
-	}
-
 	BatchNorm2dLayer::BatchNorm2dLayer(CudaNn* nn, int inDim) : CudaLayer(nn), _pX(nullptr), _accCount(0)
 	{
 		_meanAndVariance.ResetTensor(2, inDim);
-		_meanAndVarianceAcc.ResetTensor(2, inDim + 1);
+		_meanAndVarianceAcc.ResetTensor(2, inDim);
 		_meanAndVarianceAcc.SetZero();
 		_meanAndVarianceG.ResetTensor(2, inDim);
 		_w.ResetTensor(2, inDim);
@@ -844,23 +732,12 @@ namespace ff
 		_wG_v.SetZero();
 	}
 
-	__global__ void ForwardBatchNorm2d_Train_0_Cuda(float* meanAndVarianceAcc)
-	{
-		meanAndVarianceAcc[0] += 1.0f;
-	}
-
-	__global__ void ForwardBatchNorm2d_Train_1_Cuda(float* meanAndVarianceAcc)
-	{
-		int ch = threadIdx.x + 1;
-		meanAndVarianceAcc[0] = 12.0f;
-		meanAndVarianceAcc[ch * 2 + 0] *= 0.5f;
-		meanAndVarianceAcc[ch * 2 + 1] *= 0.5f;
-	}
-
-	template<int BLOCK_SIZE> __global__ void ForwardBatchNorm2d_Train_2_Cuda(
+	template<int BLOCK_SIZE> __global__ void ForwardBatchNorm2d_Train_Cuda(
 		float* meanAndVariance, float* meanAndVarianceAcc, float* xHat, float* y,
-		const float* w, const float* x, int nImages, int nChannel, int nRow, int nCol)
+		const float* w, const float* x, int nRow, int nCol)
 	{
+		int nChannel = gridDim.x;
+		int nImages = blockDim.x;
 		int ch = blockIdx.x;
 		int image = threadIdx.x;
 
@@ -901,41 +778,78 @@ namespace ff
 
 		float alpha = w[ch * 2 + 0];
 		float beta = w[ch * 2 + 1];
+		float d = sqrtf(variance) + 1e-8f;
+		for (int i = 0; i < channelStride; ++i)
+		{
+			float xDash = (x[baseIndex + i] - mean) / d;
+			xHat[baseIndex + i] = xDash;
+			y[baseIndex + i] = alpha * xDash + beta;
+		}
+
 		if (threadIdx.x == 0)
 		{
 			meanAndVariance[ch * 2 + 0] = mean;
 			meanAndVariance[ch * 2 + 1] = variance;
-			meanAndVarianceAcc[(ch + 1) * 2 + 0] += mean;
-			meanAndVarianceAcc[(ch + 1) * 2 + 1] += variance;
-		}
-		float d = rsqrtf(variance + 1e-8f);
-		for (int i = 0; i < channelStride; ++i)
-		{
-			float xDash = (x[baseIndex + i] - mean) * d;
-			xHat[baseIndex + i] = xDash;
-			y[baseIndex + i] = alpha * xDash + beta;
+			meanAndVarianceAcc[ch * 2 + 0] += mean;
+			meanAndVarianceAcc[ch * 2 + 1] += variance;
 		}
 	}
 
 	__global__ void ForwardBatchNorm2d_Cuda(
-		float* meanAndVarianceAcc, float* y,
-		const float* w, const float* x, int nImages, int nChannel, int nRow, int nCol)
+		float* y, const float* meanAndVarianceAcc, int accCount,
+		const float* w, const float* x, int nRow, int nCol)
 	{
+		int nChannel = gridDim.x;
 		int ch = blockIdx.x;
 		int image = threadIdx.x;
 
-		int accNumBatch = max(2, (int)meanAndVarianceAcc[0]);
-		float alpha = w[ch * 2 + 0];
-		float beta = w[ch * 2 + 1];
-		float mean = meanAndVarianceAcc[(ch + 1) * 2 + 0] / accNumBatch;
-		float variance = (meanAndVarianceAcc[(ch + 1) * 2 + 1] / (accNumBatch - 1));
-		float d = rsqrtf(variance + 1e-8f);
-		float a = alpha * d;
-		float b = beta - (alpha * mean) * d;
 		int imageStride = nChannel * nRow * nCol;
 		int channelStride = nRow * nCol;
 		int currChBaseIndex = ch * channelStride;
 		int baseIndex = image * imageStride + currChBaseIndex;
+
+		float alpha = w[ch * 2 + 0];
+		float beta = w[ch * 2 + 1];
+
+#if 1	// Note(dongwook): Deteministic network
+		float mean = meanAndVarianceAcc[ch * 2 + 0] / accCount;
+		float variance = meanAndVarianceAcc[ch * 2 + 1] / (accCount - 1);
+		//float variance = (meanAndVarianceAcc[ch * 2 + 1] / (accCount));
+#else	// Note(dongwook): Non-deteministic network for batch input.
+		int nImages = blockDim.x;
+		int mDash = nImages * nRow * nCol;
+		__shared__ float meanArr[100];
+		meanArr[image] = 0.0f;
+		for (int i = 0; i < channelStride; ++i)
+		{
+			meanArr[image] += x[baseIndex + i];
+		}
+		__syncthreads();
+		float mean = 0.0f;
+		for (int i = 0; i < nImages; ++i)
+		{
+			mean += meanArr[i];
+		}
+		mean /= mDash;
+
+		__shared__ float varianceArr[100];
+		varianceArr[image] = 0.0f;
+		for (int i = 0; i < channelStride; ++i)
+		{
+			float a = x[baseIndex + i] - mean;
+			varianceArr[image] += (a * a);
+		}
+		__syncthreads();
+		float variance = 0.0f;
+		for (int i = 0; i < nImages; ++i)
+		{
+			variance += varianceArr[i];
+		}
+		variance /= mDash;
+#endif
+		float d = 1.0f / (sqrtf(variance) + 1e-8f);
+		float a = alpha * d;
+		float b = beta - (alpha * mean) * d;
 		for (int i = 0; i < channelStride; ++i)
 		{
 			y[baseIndex + i] = a * x[baseIndex + i] + b;
@@ -951,27 +865,19 @@ namespace ff
 
 		if (_nn->IsTraining())
 		{
-			if (++_accCount <= 24)
-			{
-				ForwardBatchNorm2d_Train_0_Cuda <<< 1, 1 >>> (_meanAndVarianceAcc._dataGpu);
-			}
-			else
-			{
-				ForwardBatchNorm2d_Train_1_Cuda <<< 1, x->_d2 >>> (_meanAndVarianceAcc._dataGpu);
-				_accCount = 12;
-			}
 			assert(x->_d3 <= 256);
-			ForwardBatchNorm2d_Train_2_Cuda <256> <<< x->_d2, x->_d3 >>> (
+			ForwardBatchNorm2d_Train_Cuda <256> <<< x->_d2, x->_d3 >>> (
 				_meanAndVariance._dataGpu, _meanAndVarianceAcc._dataGpu, _xHat._dataGpu, _y._dataGpu,
-				_w._dataGpu, x->_dataGpu, x->_d3, x->_d2, x->_d1, x->_d0);
+				_w._dataGpu, x->_dataGpu, x->_d1, x->_d0);
 			assert(cudaGetLastError() == cudaSuccess);
+			++_accCount;
 		}
 		else
 		{
 			assert(x->_d3 <= 256);
 			ForwardBatchNorm2d_Cuda <<< x->_d2, x->_d3 >>> (
-				_meanAndVarianceAcc._dataGpu, _y._dataGpu,
-				_w._dataGpu, x->_dataGpu, x->_d3, x->_d2, x->_d1, x->_d0);
+				_y._dataGpu, _meanAndVarianceAcc._dataGpu, _accCount > 1 ? _accCount : 2,
+				_w._dataGpu, x->_dataGpu, x->_d1, x->_d0);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 
@@ -979,10 +885,12 @@ namespace ff
 	}
 
 	template<int BLOCK_SIZE> __global__ void BackwardBatchNorm2d_Cuda(
-		float* wG, float* xG, float* meanAndVarianceG,
-		const float* w, const float* x, const float* xHat, const float* meanAndVariance, float* yG,
-		int nImages, int nChannel, int nRow, int nCol)
+		float* wG, float* xG, float* meanAndVarianceG, float* meanAndVarianceAcc,
+		const float* w, const float* x, const float* xHat, const float* meanAndVariance, const float* yG,
+		int nRow, int nCol)
 	{
+		int nChannel = gridDim.x;
+		int nImages = blockDim.x;
 		int ch = blockIdx.x;
 		int image = threadIdx.x;
 
@@ -1031,8 +939,8 @@ namespace ff
 
 		__shared__ float meanGarr[BLOCK_SIZE];
 		meanGarr[image] = 0.0f;
-		float varianceSqrt = sqrtf(variance + 1e-8f);
-		b = -1.0f / varianceSqrt;
+		float varianceSqrtInv = 1.0f / (sqrtf(variance) + 1e-8f);
+		b = -varianceSqrtInv;
 		for (int i = 0; i < channelStride; ++i)
 		{
 			meanGarr[image] += xG[baseIndex + i] * b + varianceG * ((-2.0f * (x[baseIndex + i] - mean)) / mDash);
@@ -1049,8 +957,12 @@ namespace ff
 		for (int i = 0; i < channelStride; ++i)
 		{
 			float currXg = xG[baseIndex + i];
-			xG[baseIndex + i] = currXg / varianceSqrt + varianceG * ((2.0f * (x[baseIndex + i] - mean)) / mDash) + b;
+			xG[baseIndex + i] = currXg * varianceSqrtInv + varianceG * ((2.0f * (x[baseIndex + i] - mean)) / mDash) + b;
 		}
+
+		// Reset
+		meanAndVarianceAcc[ch * 2 + 0] = 0.0f;
+		meanAndVarianceAcc[ch * 2 + 1] = 0.0f;
 	}
 
 	const CudaTensor* BatchNorm2dLayer::Backward(const CudaTensor* yG, const int layerIndex)
@@ -1058,96 +970,18 @@ namespace ff
 		// _pX.shape == _xG.shape == yG.shape == _y.shape
 		_xG.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
 
-#if 1
 		assert(_xG._d3 <= 256);
 		BackwardBatchNorm2d_Cuda<256> <<< _xG._d2, _xG._d3 >>> (
-			_wG._dataGpu, _xG._dataGpu, _meanAndVarianceG._dataGpu,
+			_wG._dataGpu, _xG._dataGpu, _meanAndVarianceG._dataGpu, _meanAndVarianceAcc._dataGpu,
 			_w._dataGpu, _pX->_dataGpu, _xHat._dataGpu, _meanAndVariance._dataGpu, yG->_dataGpu,
-			_xG._d3, _xG._d2, _xG._d1, _xG._d0);
+			_xG._d1, _xG._d0);
 		assert(cudaGetLastError() == cudaSuccess);
-#else
-
-		const_cast<CudaTensor*>(_pX)->PullFromGpu();
-		const_cast<CudaTensor*>(yG)->PullFromGpu();
-		_w.PullFromGpu();
-
-		for (int inDim = 0; inDim < _wG._d1; ++inDim)
-		{
-			_wG._data[inDim * _wG._d0 + 0] = 0.0f;
-			_wG._data[inDim * _wG._d0 + 1] = 0.0f;
-			for (int image = 0; image < _y._d3; ++image)
-			{
-				int baseIndex = image * _y._d2 * _y._d1 * _y._d0 + inDim * _y._d1 * _y._d0;
-				for (int i = 0; i < _y._d1 * _y._d0; ++i)
-				{
-					_wG._data[inDim * _wG._d0 + 0] += yG->_data[baseIndex + i] * _xHat._data[baseIndex + i];
-					_wG._data[inDim * _wG._d0 + 1] += yG->_data[baseIndex + i];
-					_xG._data[baseIndex + i] = yG->_data[baseIndex + i] * _w._data[inDim * _wG._d0 + 0];
-				}
-			}
-		}
-		for (int inDim = 0; inDim < _wG._d1; ++inDim)
-		{
-			float mean = _meanAndVariance._data[inDim * _meanAndVariance._d0 + 0];
-			float variance = _meanAndVariance._data[inDim * _meanAndVariance._d0 + 1];
-			_meanAndVarianceG._data[inDim * _meanAndVarianceG._d0 + 1] = 0.0f;
-			float b = -0.5f * powf(variance + 1e-8f, -1.5f);
-			for (int image = 0; image < _xG._d3; ++image)
-			{
-				int baseIndex = image * _xG._d2 * _xG._d1 * _xG._d0 + inDim * _xG._d1 * _xG._d0;
-				for (int i = 0; i < _xG._d1 * _xG._d0; ++i)
-				{
-					_meanAndVarianceG._data[inDim * _meanAndVarianceG._d0 + 1] += 
-						(_xG._data[baseIndex + i] * (_pX->_data[baseIndex + i] - mean) * b);
-				}
-			}
-		}
-
-		int mDash = _pX->_d3 * _pX->_d1 * _pX->_d0;
-		for (int inDim = 0; inDim < _wG._d1; ++inDim)
-		{
-			float mean = _meanAndVariance._data[inDim * _meanAndVariance._d0 + 0];
-			float variance = _meanAndVariance._data[inDim * _meanAndVariance._d0 + 1];
-			_meanAndVarianceG._data[inDim * _meanAndVarianceG._d0 + 0] = 0.0f;
-			float b = -1.0f / sqrtf(variance + 1e-8f);
-			for (int image = 0; image < _xG._d3; ++image)
-			{
-				int baseIndex = image * _xG._d2 * _xG._d1 * _xG._d0 + inDim * _xG._d1 * _xG._d0;
-				for (int i = 0; i < _xG._d1 * _xG._d0; ++i)
-				{
-					_meanAndVarianceG._data[inDim * _meanAndVarianceG._d0 + 0] +=
-						_xG._data[baseIndex + i] * b + _meanAndVarianceG._data[inDim * _meanAndVarianceG._d0 + 1] *
-							((-2.0f * (_pX->_data[baseIndex + i] - mean)) / mDash);
-				}
-			}
-		}
-
-		for (int inDim = 0; inDim < _wG._d1; ++inDim)
-		{
-			float mean = _meanAndVariance._data[inDim * _meanAndVariance._d0 + 0];
-			float variance = _meanAndVariance._data[inDim * _meanAndVariance._d0 + 1];
-			float b = sqrtf(variance + 1e-8f);
-			float c = _meanAndVarianceG._data[inDim * _meanAndVarianceG._d0 + 0] / mDash;
-			for (int image = 0; image < _xG._d3; ++image)
-			{
-				int baseIndex = image * _xG._d2 * _xG._d1 * _xG._d0 + inDim * _xG._d1 * _xG._d0;
-				for (int i = 0; i < _xG._d1 * _xG._d0; ++i)
-				{
-					_xG._data[baseIndex + i] = _xG._data[baseIndex + i] / b +
-						_meanAndVarianceG._data[inDim * _meanAndVarianceG._d0 + 1] *
-						((2.0f * (_pX->_data[baseIndex + i] - mean)) / mDash) + c;
-				}
-			}
-		}
-		_wG.PushToGpu();
-		_xG.PushToGpu();
-#endif
+		_accCount = 0;
 		return &_xG;
 	}
 
 	void BatchNorm2dLayer::UpdateWs(float learningRate, float beta1, float beta2, float beta1t, float beta2t)
 	{
-		_wG.PushToGpu();
 		{
 			int nJobs = _w._d1 * _w._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
@@ -1160,18 +994,20 @@ namespace ff
 	void BatchNorm2dLayer::Pull()
 	{
 		_meanAndVariance.PullFromGpu();
+		_meanAndVarianceAcc.PullFromGpu();
 		_meanAndVarianceG.PullFromGpu();
 		_w.PullFromGpu();
 		_wG.PullFromGpu();
 		_wG_m.PullFromGpu();
 		_wG_v.PullFromGpu();
 		_xG.PullFromGpu();
+		_xHat.PullFromGpu();
 		_y.PullFromGpu();
 	}
 
 	__global__ void Dropout_Cuda(float* x, const float* inputX, const float* dropoutMask, int nJobs)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		if (index >= nJobs) return;
 
 		x[index] = inputX[index] * dropoutMask[index];
@@ -1224,7 +1060,7 @@ namespace ff
 
 	__global__ void ForwardSoftmax_Cuda(float* softmax , const float* x, int nRow, int nCol)
 	{
-		int r = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int r = blockIdx.x * blockDim.x + threadIdx.x;
 		if (nRow <= r) return;
 
 		int baseIndex = r * nCol;
@@ -1258,7 +1094,7 @@ namespace ff
 
 	__global__ void BackwardSoftmax_Cuda(float* lossG, const float* softmax, const float* yLabel, int nCol, int nJobs)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		if (index >= nJobs) return;
 		int r = index / nCol;
 		int c = index % nCol;
@@ -1290,7 +1126,7 @@ namespace ff
 
 	__global__ void BackwardSumOfSqures(float* yG, const float* y, const float* yLabel, int nJobs)
 	{
-		int index = blockIdx.x * K_THREAD_PER_BLOCK + threadIdx.x;
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
 		if (index >= nJobs) return;
 
 		float diff = y[index] - yLabel[index];
@@ -1342,7 +1178,6 @@ namespace ff
 			delete _layers[i];
 		}
 		_layers.clear();
-
 		return true;
 	}
 
@@ -1367,12 +1202,6 @@ namespace ff
 	bool CudaNn::AddRelu()
 	{
 		_layers.push_back(new ReluLayer(this));
-		return true;
-	}
-
-	bool CudaNn::AddBatchNorm1d(int inDim)
-	{
-		_layers.push_back(new BatchNorm1dLayer(this, inDim));
 		return true;
 	}
 

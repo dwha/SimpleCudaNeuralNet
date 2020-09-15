@@ -25,6 +25,9 @@ message (STATUS "C_FLAGS: " ${CMAKE_C_FLAGS})
 message (STATUS "CXX_FLAGS: " ${CMAKE_CXX_FLAGS})
 message (STATUS "CXX_FLAGS_DEBUG: " ${CMAKE_CXX_FLAGS_DEBUG})
 message (STATUS "CXX_FLAGS_RELEASE: " ${CMAKE_CXX_FLAGS_RELEASE})
+message (STATUS "CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
+message (STATUS "CUDA_FLAGS_DEBUG: " ${CMAKE_CUDA_FLAGS_DEBUG})
+message (STATUS "CUDA_FLAGS_RELEASE: " ${CMAKE_CUDA_FLAGS_RELEASE})
 message (STATUS "#############################################")
 
 include_directories (

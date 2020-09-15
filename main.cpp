@@ -7,15 +7,16 @@ int cifar10();
 int simple()
 {
 #if 1
-	float learningRate = 0.01f;
+	float learningRate = 0.0001f;
 	ff::CudaNn nn;
-	nn.AddFc(1000, 4096);
-	nn.AddFc(4096, 1024);
+	nn.AddFc(1000, 1000);
+	nn.AddRelu();
+	nn.AddFc(1000, 500);
 	nn.AddDropout(0.5f);
 	nn.AddRelu();
-	nn.AddFc(1024, 1024);
+	nn.AddFc(500, 500);
 	nn.AddRelu();
-	nn.AddFc(1024, 10);
+	nn.AddFc(500, 10);
 	nn.AddSumOfSquares();
 
 	ff::CudaTensor x(1000, 256);
@@ -25,14 +26,14 @@ int simple()
 #else
 	float learningRate = 0.001f;
 	ff::CudaNn nn;
-	nn.AddConv2d(3, 1, 8, 1, 1);		// 8 * 8 * 8
+	nn.AddConv2d(3, 1, 16, 1, 1);
 	nn.AddRelu();
-	nn.AddConv2d(3, 8, 16, 1, 1);		// 8 * 8 * 16
+	nn.AddConv2d(3, 16, 32, 1, 1);
 	nn.AddRelu();
-	nn.AddConv2d(3, 16, 16, 1, 1);		// 8 * 8 * 16
+	nn.AddConv2d(3, 32, 64, 1, 1);
 	nn.AddRelu();
-	nn.AddMaxPool();					// 4 * 4 * 16
-	nn.AddFc(256, 10);
+	nn.AddMaxPool();
+	nn.AddFc(4*4*64, 10);
 	nn.AddSumOfSquares();
 
 	ff::CudaTensor x(8, 8, 1, 256);
@@ -72,7 +73,7 @@ int simple()
 
 int main()
 {
-	return cifar10();
+	//return cifar10();
 	//return mnist();
-	//return simple();
+	return simple();
 }

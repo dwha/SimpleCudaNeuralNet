@@ -5,21 +5,37 @@
 #include <algorithm>
 #include <math.h>
 #include <chrono>
+#include <random>
 #include "ffCudaNn.h"
+
+namespace ff
+{
+	extern std::default_random_engine g_generator;
+}
 
 class ProfileScope
 {
 public:
-	ProfileScope(const char* msg) : _msg(msg)
+	ProfileScope(const char* msg) : _msg(msg), _delta(-1.0f)
 	{
 		_s = std::chrono::high_resolution_clock::now();
 	}
 	~ProfileScope()
 	{
-		std::chrono::duration<float> delta = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - _s);
-		printf("%s [%fs]\n", _msg, delta.count());
+		if (_delta < 0.0f)
+		{
+			EndScope();
+		}
+		printf("%s [%fs]\n", _msg, _delta);
+	}
+	void EndScope()
+	{
+		std::chrono::duration<float> delta =
+			std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - _s);
+		_delta = delta.count();
 	}
 	const char* _msg;
+	float _delta;
 	std::chrono::high_resolution_clock::time_point _s;
 };
 
@@ -64,6 +80,16 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 		nLeft -= batchSize;
 	}
 
+	std::vector<int> order(numTotalImages);
+	for (int i = 0; i < numTotalImages; ++i)
+	{
+		order[i] = i;
+	}
+	if (true == augment)
+	{
+		std::shuffle(order.begin(), order.end(), ff::g_generator);
+	}
+
 	// Data normalization
 	float mean[3] = { 0.4914f, 0.4822f, 0.4465f };
 	float std[3] = { 0.2023f, 0.1994f, 0.2010f };
@@ -81,18 +107,19 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 		for (int j = 0; j < kNumImagePerFile; ++j)
 		{
 			bool bFlip = false;
-			if (true == augment && 1 == rand() % 2) bFlip = true;
-			int batchIndex = imageCounter / batchSize;
-			int elementIndex = imageCounter % batchSize;
+			if (true == augment && 1 == ff::g_generator() % 2) bFlip = true;
+			int batchIndex = order[imageCounter] / batchSize;
+			int elementIndex = order[imageCounter] % batchSize;
 			labels[batchIndex]._data[elementIndex] = static_cast<float>(*pCurr++);
+			int baseIndex = elementIndex * kNumBytesPerChannel * kNumChannel;
 			for (int ch = 0; ch < kNumChannel; ++ch)
 			{
 				for (int row = 0; row < 32; ++row)
 				{
 					for (int col = 0; col < 32; ++col)
 					{
-						float val = *pCurr++;
-						int index = elementIndex * kNumBytesPerChannel * kNumChannel + ch * kNumBytesPerChannel;
+						float val = static_cast<float>(*pCurr++);
+						int index = baseIndex + ch * kNumBytesPerChannel;
 						if (true == bFlip)
 						{
 							index += (row * 32 + (31 - col));
@@ -101,7 +128,7 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 						{
 							index += (row * 32 + col);
 						}
-						images[batchIndex]._data[index] = ((val / 255.0f) - mean[ch]) / std[ch];
+						images[batchIndex]._data[index] = val / 255.0f;
 					}
 				}
 			}
@@ -109,7 +136,6 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 			{
 				int shift = 8;
 				int newSize = 32 + shift;
-				int baseIndex = elementIndex * kNumBytesPerChannel * kNumChannel;
 				buffer.resize(newSize * newSize * kNumChannel);
 				for (int ch = 0; ch < kNumChannel; ++ch)
 				{
@@ -123,8 +149,8 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 						}
 					}
 				}
-				int rowShift = static_cast<int>(rand() % (shift+1));
-				int colShift = static_cast<int>(rand() % (shift+1));
+				int rowShift = static_cast<int>(ff::g_generator() % (shift+1));
+				int colShift = static_cast<int>(ff::g_generator() % (shift+1));
 				for (int ch = 0; ch < kNumChannel; ++ch)
 				{
 					for (int row = 0; row < 32; ++row)
@@ -137,6 +163,18 @@ void LoadCifar10(int batchSize, int maxImages, bool augment, const std::vector<s
 					}
 				}
 			}
+			for (int ch = 0; ch < kNumChannel; ++ch)
+			{
+				for (int row = 0; row < 32; ++row)
+				{
+					for (int col = 0; col < 32; ++col)
+					{
+						int index = baseIndex + ch * kNumBytesPerChannel + row * 32 + col;
+						images[batchIndex]._data[index] = (images[batchIndex]._data[index] - mean[ch])/std[ch];
+					}
+				}
+			}
+
 			++imageCounter;
 			if (imageCounter >= numTotalImages)
 				break;
@@ -183,7 +221,11 @@ int ComputeLoss(ff::CudaNn& nn, std::vector<ff::CudaTensor>& images, std::vector
 
 int cifar10()
 {
+	// Note(dongwook): Hyper-parameters
+	const bool augmentDataSet = false;
 	const int kBatchSize = 100;
+	const int kDataSetScalerInv = 1;
+	float learningRate = 0.001f;
 
 	std::vector<std::string> trainingDataFilenames;
 	trainingDataFilenames.push_back("cifar-10/data_batch_1.bin");
@@ -193,12 +235,12 @@ int cifar10()
 	trainingDataFilenames.push_back("cifar-10/data_batch_5.bin");
 	std::vector<ff::CudaTensor> trainingImages;
 	std::vector<ff::CudaTensor> trainingLabels;
-	LoadCifar10(kBatchSize, 5000, false, trainingDataFilenames, trainingImages, trainingLabels);
+	LoadCifar10(kBatchSize, 50000 / kDataSetScalerInv, false, trainingDataFilenames, trainingImages, trainingLabels);
 	std::vector<std::string> testDataFilenames;
 	testDataFilenames.push_back("cifar-10/test_batch.bin");
 	std::vector<ff::CudaTensor> testImages;
 	std::vector<ff::CudaTensor> testLabels;
-	LoadCifar10(kBatchSize, 1000, false, testDataFilenames, testImages, testLabels);
+	LoadCifar10(kBatchSize, 10000 / kDataSetScalerInv , false, testDataFilenames, testImages, testLabels);
 
 #if 1
 	ff::CudaNn nn;
@@ -224,9 +266,9 @@ int cifar10()
 	nn.AddBatchNorm2d(256);
 	nn.AddRelu();
 	nn.AddMaxPool();
-	nn.AddFc(4 * 256, 1024);
+	nn.AddFc(4 * 256, 1000);
 	nn.AddRelu();
-	nn.AddFc(1024, 10);
+	nn.AddFc(1000, 10);
 	nn.AddSoftmax();
 #else
 	ff::CudaNn nn;
@@ -271,42 +313,52 @@ int cifar10()
 	nn.AddSoftmax();
 #endif
 
-	float learningRate = 0.001f;
-
-	float last_train_loss = 0.0f;
-	float lowest_train_loss = 1e8f;
+	float last_validation_loss = 0.0f;
+	float lowest_validation_loss = 1e8f;
 	float last_test_loss = 0.0f;
 	float lowest_test_loss = 1e8f;
-	const int numBatch = (int)trainingImages.size();
-	const int kNumEpoch = 200;
+	const int kNumEpoch = 100;
 	for (int i = 0; i < kNumEpoch; ++i)
 	{
 		float currLearningRate = learningRate;
 
 		// gradual decay
 		//const float kDecay = 0.2f;
-		//const int kCooldown = 3;
+		//const int kCooldown = 24;
 		//if (i >= kCooldown)
 		//{
 		//	currLearningRate *= expf(-1.0f * kDecay * (i - kCooldown));
 		//}
+
+		if (true == augmentDataSet && 0 != i)
+		{
+			LoadCifar10(kBatchSize, 50000 / kDataSetScalerInv, true, trainingDataFilenames, trainingImages, trainingLabels);
+		}
 
 		char buffer[2048];
 		sprintf(buffer, "-- Epoch %03d(lr: %f)", i + 1, currLearningRate);
 		ProfileScope __m(buffer);
 
 		// Training
-		int trainingImageCounter = 0;
-		float train_loss = 0.0f;
-		int top1 = 0, top3 = 0, top5 = 0;
+		const int numBatch = (int)trainingImages.size();
 		for (int j = 0; j < numBatch; ++j)
 		{
-			const ff::CudaTensor* pSoftmax = nullptr;
-			pSoftmax = nn.Forward(&trainingImages[j], true);
+			nn.Forward(&trainingImages[j], true);
 			nn.Backward(&trainingLabels[j]);
 			nn.UpdateWs(currLearningRate);
+		}
+		__m.EndScope();
 
-			// train loss
+		// Validation loss
+		int validationImageCounter = 0;
+		float validation_loss = 0.0f;
+		int top1 = 0, top3 = 0, top5 = 0;
+		for (int j = 0; j < numBatch / 10; ++j)
+		{
+			// Note(dongwook): You should call Forward() several times after training if BatchNorm layers exist.
+			//					In the subsequent calls, mean and variance parameters are set to make the network deterministic.
+			const ff::CudaTensor* pSoftmax = nullptr;
+			pSoftmax = nn.Forward(&trainingImages[j], true);
 			const_cast<ff::CudaTensor*>(pSoftmax)->PullFromGpu();
 			for (int k = 0; k < pSoftmax->_d1; ++k)
 			{
@@ -314,28 +366,28 @@ int cifar10()
 				assert(val > 0.0f);
 				if (val > 0.0f)
 				{
-					++trainingImageCounter;
-					train_loss += -logf(val);
+					++validationImageCounter;
+					validation_loss += -logf(val);
 				}
 			}
 			int t1, t3, t5;
 			CheckAccuracy(pSoftmax, trainingLabels[j], t1, t3, t5);
 			top1 += t1; top3 += t3; top5 += t5;
 		}
-		if (trainingImageCounter <= 0) trainingImageCounter = 1;
-		train_loss /= trainingImageCounter;
-		if (0 == i) last_train_loss = train_loss;
-		if (train_loss < lowest_train_loss)
+		if (validationImageCounter <= 0) validationImageCounter = 1;
+		validation_loss /= validationImageCounter;
+		if (0 == i) last_validation_loss = validation_loss;
+		if (validation_loss < lowest_validation_loss)
 		{
-			lowest_train_loss = train_loss;
+			lowest_validation_loss = validation_loss;
 		}
-		printf("Train[%05d](Loss: %f(%+f)/%f, Top1: %05d(%5.2f%%), Top3: %05d, Top5: %05d)\n",
-			trainingImageCounter,
-			train_loss, train_loss - last_train_loss, lowest_train_loss,
-			top1, top1 * 100.0f / trainingImageCounter,
+		printf("Val_[%05d](Loss: %f(%+f)/%f, Top1: %05d(%5.2f%%), Top3: %05d, Top5: %05d)\n",
+			validationImageCounter,
+			validation_loss, validation_loss - last_validation_loss, lowest_validation_loss,
+			top1, top1 * 100.0f / validationImageCounter,
 			top3,
 			top5);
-		last_train_loss = train_loss;
+		last_validation_loss = validation_loss;
 
 		// Test loss
 		{
@@ -348,7 +400,7 @@ int cifar10()
 			{
 				lowest_test_loss = test_loss;
 			}
-			printf("Test_[%05d](Loss: %f(%+f)/%f, Top1: %05d(%5.2f%%), Top3: %05d, Top5: %05d)\n",
+			printf("Test[%05d](Loss: %f(%+f)/%f, Top1: %05d(%5.2f%%), Top3: %05d, Top5: %05d)\n",
 				testCounter,
 				test_loss, test_loss - last_test_loss, lowest_test_loss,
 				top1, top1 * 100.0f / testCounter,
