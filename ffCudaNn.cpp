@@ -225,13 +225,13 @@ namespace ff
 			int nJobs = _wG._d1 * _wG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardFc_Wg_Cuda <<< block, threads >>> (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, x_d0, x_d1, _wG._d0, nJobs);
+			BackwardFc_Wg_Cuda << < block, threads >> > (_wG._dataGpu, _pX->_dataGpu, yG->_dataGpu, x_d0, x_d1, _wG._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		{
 			int numBlocks = (_b._d0 + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardFc_Bg_Cuda <<< block, threads >>> (_bG._dataGpu, yG->_dataGpu, yG->_d0, yG->_d1);
+			BackwardFc_Bg_Cuda << < block, threads >> > (_bG._dataGpu, yG->_dataGpu, yG->_d0, yG->_d1);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 
@@ -243,7 +243,7 @@ namespace ff
 			int nJobs = _xG._d1 * _xG._d0;
 			int numBlocks = (nJobs + K_THREAD_PER_BLOCK - 1) / K_THREAD_PER_BLOCK;
 			dim3 block(numBlocks), threads(K_THREAD_PER_BLOCK);
-			BackwardFc_Xg_Cuda <<< block, threads >>> (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
+			BackwardFc_Xg_Cuda << < block, threads >> > (_xG._dataGpu, yG->_dataGpu, _w._dataGpu, yG->_d0, _w._d0, _xG._d0, nJobs);
 			assert(cudaGetLastError() == cudaSuccess);
 		}
 		return &_xG;
