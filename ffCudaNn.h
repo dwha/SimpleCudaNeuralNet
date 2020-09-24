@@ -229,6 +229,23 @@ namespace ff
 		CudaTensor _yG;
 	};
 
+	class QuatNormLayer : public CudaLayer
+	{
+	public:
+	QuatNormLayer(CudaNn* nn) : CudaLayer(nn) {}
+
+	const CudaTensor* Forward(const CudaTensor*) override;
+
+	const CudaTensor* Backward(const CudaTensor*, const int layerIndex) override;
+
+	void Pull() override;
+
+	public:
+		const CudaTensor* _pX;
+		CudaTensor _y;
+		CudaTensor _xG;
+	};
+
 	class CudaNn
 	{
 	public:
@@ -247,6 +264,8 @@ namespace ff
 		bool AddRelu();
 
 		bool AddBatchNorm2d(int inDim);
+
+		bool AddQuatNorm();
 
 		bool AddDropout(float dropoutRatio);
 

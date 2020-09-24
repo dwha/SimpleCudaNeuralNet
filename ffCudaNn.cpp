@@ -13,7 +13,7 @@ namespace ff
 	///////////////////////////////////////////////////////////////////////
 	//std::default_random_engine g_generator;
 	std::default_random_engine g_generator(static_cast<int>(std::chrono::steady_clock::now().time_since_epoch().count()));
-	static std::uniform_real_distribution<float> g_uniformDistribution;
+	std::uniform_real_distribution<float> g_uniformDistribution;
 	static std::normal_distribution<float> g_normalDistribution(0.0f, 1.0f);
 
 	CudaTensor::CudaTensor() : _d0(0), _d1(0), _d2(0), _d3(0), _dataSize(0), _dataGpu(nullptr), _dataGpuSize(0)
@@ -46,7 +46,6 @@ namespace ff
 		_d0 = d0; _d1 = d1; _d2 = d2; _d3 = d3;
 		_dataSize = _d0 * _d1 * _d2 * _d3;
 		_data.resize(_dataSize);
-
 		if (_dataGpuSize < _dataSize)
 		{
 			_dataGpuSize = _dataSize;
@@ -1058,6 +1057,84 @@ namespace ff
 		_yGdropped.PullFromGpu();
 	}
 
+	__global__ void ForwardQuatNorm_Cuda(float* y, const float* x, int nQuats, int nJobs)
+	{
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
+		if (index >= nJobs) return;
+
+		int batch = index / nQuats;
+		int elem = index % nQuats;
+		int baseIndex = batch * nQuats * 4 + elem * 4;
+		float q[4] = { x[baseIndex], x[baseIndex + 1], x[baseIndex + 2], x[baseIndex + 3] };
+		float l = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]) + 1e-8f;
+		y[baseIndex+0] = q[0] / l;
+		y[baseIndex+1] = q[1] / l;
+		y[baseIndex+2] = q[2] / l;
+		y[baseIndex+3] = q[3] / l;
+	}
+
+	const CudaTensor* QuatNormLayer::Forward(const CudaTensor* x)
+	{
+		assert(x->_d0 % 4 == 0);
+		_pX = x;
+		_y.ResetTensor(x->_d0, x->_d1, x->_d2, x->_d3);
+
+		int nJobs = _pX->_d0 * _pX->_d1 / 4;
+		int nBlocks = (nJobs + K_SMALL_THREAD_PER_BLOCK - 1) / K_SMALL_THREAD_PER_BLOCK;
+		dim3 block(nBlocks), threads(K_SMALL_THREAD_PER_BLOCK);
+		ForwardQuatNorm_Cuda <<< block, threads >>> (_y._dataGpu, _pX->_dataGpu, _pX->_d1 / 4, nJobs);
+		assert(cudaGetLastError() == cudaSuccess);
+
+		return &_y;
+	}
+
+	__global__ void BackwardQuatNorm_Cuda(float* xG, const float* x, const float* yG, int nQuats, int nJobs)
+	{
+		int index = blockIdx.x * blockDim.x + threadIdx.x;
+		if (index >= nJobs) return;
+
+		int batch = index / nQuats;
+		int elem = index % nQuats;
+		int baseIndex = batch * nQuats * 4 + elem * 4;
+		float q[4] = { x[baseIndex], x[baseIndex + 1], x[baseIndex + 2], x[baseIndex + 3] };
+		float tYg[4] = { yG[baseIndex], yG[baseIndex + 1], yG[baseIndex + 2], yG[baseIndex + 3] };
+		float squaredSum = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+		float a = powf(squaredSum + 1e-8f, -1.5f);
+		for (int i = 0; i < 4; ++i)
+		{
+			float b = squaredSum * tYg[i];
+			float c = 0.0f;
+			for (int j = 0; j < 4; ++j)
+			{
+				c += (q[i] * q[j] * tYg[j]);
+			}
+			xG[baseIndex + i] = a * (b - c);
+		}
+	}
+
+	const CudaTensor* QuatNormLayer::Backward(const CudaTensor* yG, const int layerIndex)
+	{
+		assert(yG->_dataSize == _pX->_dataSize);
+		_xG.ResetTensor(_pX->_d0, _pX->_d1, _pX->_d2, _pX->_d3);
+
+		if (layerIndex > 0)
+		{
+			int nJobs = _xG._d0 * _xG._d1 / 4;
+			int nBlocks = (nJobs + K_SMALL_THREAD_PER_BLOCK - 1) / K_SMALL_THREAD_PER_BLOCK;
+			dim3 block(nBlocks), threads(K_SMALL_THREAD_PER_BLOCK);
+			BackwardQuatNorm_Cuda <<< block, threads >>> (_xG._dataGpu, _pX->_dataGpu, yG->_dataGpu, _xG._d0 / 4, nJobs);
+			assert(cudaGetLastError() == cudaSuccess);
+		}
+
+		return &_xG;
+	}
+
+	void QuatNormLayer::Pull()
+	{
+		_y.PullFromGpu();
+		_xG.PullFromGpu();
+	}
+
 	__global__ void ForwardSoftmax_Cuda(float* softmax , const float* x, int nRow, int nCol)
 	{
 		int r = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1227,6 +1304,12 @@ namespace ff
 	bool CudaNn::AddSumOfSquares()
 	{
 		_layers.push_back(new SumOfSquaresLayer(this));
+		return true;
+	}
+
+	bool CudaNn::AddQuatNorm()
+	{
+		_layers.push_back(new QuatNormLayer(this));
 		return true;
 	}
 
