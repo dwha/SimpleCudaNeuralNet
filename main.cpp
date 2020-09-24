@@ -208,8 +208,8 @@ int simple()
 
 int main()
 {
-	return TestQuatNorm();
+	//return TestQuatNorm();
 	//return cifar10();
 	//return mnist();
-	//return simple();
+	return simple();
 }
