@@ -52,6 +52,8 @@ namespace ff
 			if (_dataGpu) cudaFree(_dataGpu);
 			cudaError_t err = cudaMalloc(&_dataGpu, _dataGpuSize * sizeof(float));
 			assert(err == cudaSuccess);
+			//printf("%s\n", cudaGetErrorName(cudaGetLastError()));
+			//printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		}
 	}
 
